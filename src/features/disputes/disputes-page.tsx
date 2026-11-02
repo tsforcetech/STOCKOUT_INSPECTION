@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/common/page-header";
 import { SectionCard, Toolbar, RefreshButton } from "@/components/common/section-card";
 import { StatusBadge } from "@/components/common/status-badge";
 import { DataTable } from "@/components/tables/data-table";
+import { CardList, MoreFilters } from "@/components/common/card-list";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/input";
 import { RequirePermission } from "@/lib/auth/guards";
@@ -45,6 +47,9 @@ function Content() {
     [sellers],
   );
   const filtered = !!(s.type || s.seller || s.listing) || s.status !== "SUBMITTED";
+  const isPhone = useMediaQuery("(max-width: 767px)");
+  const [more, setMore] = React.useState(false);
+  const badge = (d: AdminInspectionDisputeDto) => <StatusBadge value={d.status === "SUBMITTED" ? "PENDING" : d.status === "REJECTED" ? "REJECTED" : "APPROVED"} label={DISPUTE_STATUS_LABEL[d.status]} />;
   return (
     <>
       <PageHeader eyebrow="StockOut inspection" title="Inspection disputes" description="Seller appeals of inspection results and disputes after declining a correction. Decide by approving a re-inspection (by a different inspector) or rejecting." />
@@ -81,10 +86,37 @@ function Content() {
             </>
           }
         />
-        <div className="-mt-1 mb-4 grid gap-2 sm:grid-cols-2">
-          <GuidFilterInput value={s.seller} onChange={(seller) => set({ seller }, { resetPage: true })} label="Seller ID" placeholder="Seller ID" />
-          <GuidFilterInput value={s.listing} onChange={(listing) => set({ listing }, { resetPage: true })} label="Listing ID" placeholder="Listing ID" />
+        <MoreFilters isPhone={isPhone} open={more} onToggle={() => setMore((v) => !v)} active={!!(s.seller || s.listing)} />
+        <div hidden={isPhone && !more} className="-mt-1 mb-4 grid gap-2 sm:grid-cols-2">
+          <GuidFilterInput className="sm:w-full" value={s.seller} onChange={(seller) => set({ seller }, { resetPage: true })} label="Seller ID" placeholder="Seller ID" />
+          <GuidFilterInput className="sm:w-full" value={s.listing} onChange={(listing) => set({ listing }, { resetPage: true })} label="Listing ID" placeholder="Listing ID" />
         </div>
+        {isPhone ? (
+          <CardList
+            label="Inspection disputes"
+            rows={(q.data?.items ?? []).map((d) => ({
+              id: d.disputeId,
+              to: `/disputes/${d.disputeId}`,
+              title: d.disputeNo,
+              badge: badge(d),
+              lines: [
+                d.listingTitle ?? `Listing ${d.listingId.slice(0, 8)}`,
+                `${DISPUTE_TYPE_LABEL[d.disputeType] ?? d.disputeType} · ${d.inspectionNo ?? "—"} (${d.disputedInspectionResult})`,
+                <>
+                  <PersonText id={d.sellerId} names={sellers} /> · {fmtUtc(d.submittedAtUtc)}
+                </>,
+              ],
+            }))}
+            isLoading={q.isLoading}
+            error={q.error}
+            onRetry={() => q.refetch()}
+            emptyTitle={s.status === "SUBMITTED" ? "No disputes waiting for a decision" : "No disputes match these filters"}
+            page={s.page}
+            pageSize={s.pageSize}
+            totalCount={q.data?.totalCount ?? 0}
+            onPageChange={(page) => set({ page })}
+          />
+        ) : (
         <DataTable
           caption="Inspection disputes"
           columns={columns}
@@ -98,6 +130,7 @@ function Content() {
           pagination={{ page: s.page, pageSize: s.pageSize, totalCount: q.data?.totalCount ?? 0, onPageChange: (page) => set({ page }), onPageSizeChange: (pageSize) => set({ pageSize, page: 1 }) }}
           emptyTitle={s.status === "SUBMITTED" ? "No disputes waiting for a decision" : "No disputes match these filters"}
         />
+        )}
       </SectionCard>
     </>
   );

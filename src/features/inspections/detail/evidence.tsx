@@ -1,87 +1,374 @@
 import * as React from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { CameraIcon, FileIcon, ImageIcon, TrashIcon, UploadSimpleIcon } from "@phosphor-icons/react";
-import { SectionCard, RowAction } from "@/components/common/section-card";
-import { FormField } from "@/components/forms/form-field";
+import { CameraIcon, CheckCircleIcon, FileIcon, ImageIcon, SpinnerGapIcon, TrashIcon, UploadSimpleIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { SectionCard } from "@/components/common/section-card";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Input, NativeSelect } from "@/components/ui/input";
 import { useApiMutation } from "@/hooks/use-api-mutation";
 import { formatBytes } from "@/lib/utils/format";
-import type { InspectionDetailDto, InspectionEvidenceDto, InspectionEvidenceType } from "@/api/types/catalog-moderation";
+import { getErrorMessage } from "@/lib/api/errors";
+import { cn } from "@/lib/utils/cn";
+import type { InspectionDetailDto, InspectionEvidenceDto } from "@/api/types/catalog-moderation";
 import { INSPECTION_EVIDENCE_FILE_PURPOSE } from "@/api/types/catalog-moderation";
 import { inspectionsService } from "@/services/inspections.service";
 import { filesService, FILE_LIMITS, isAllowedFileType } from "@/services/files.service";
-import { ApiErrorNotice, Notice, SignedFileLink, PanelTitle, PersonText, fmtUtc, isConflict, useUserNames } from "@/features/listings/shared";
-import { inspectionKeys } from "../queries";
+import { ApiErrorNotice, PanelTitle, SignedFileLink, fmtUtc } from "@/features/listings/shared";
+import { useInspectionWriter } from "./writer";
 
 const limit = FILE_LIMITS[INSPECTION_EVIDENCE_FILE_PURPOSE];
+const CLEAN_LABEL = /^\[CRITICAL\]\s*/i;
+export const itemName = (label: string) => label.replace(CLEAN_LABEL, "");
 
-export function EvidencePanel({ inspection, editable }: { inspection: InspectionDetailDto; editable: boolean }) {
-  const queryClient = useQueryClient();
-  const names = useUserNames();
-  const [removing, setRemoving] = React.useState<InspectionEvidenceDto | null>(null);
-  const itemLabel = React.useMemo(() => new Map(inspection.responses.map((r) => [r.inspectionResponseId, r.itemLabelSnapshot])), [inspection.responses]);
-  const evidence = [...inspection.evidence].sort((a, b) => a.displayOrder - b.displayOrder);
-  const detailKey = inspectionKeys.detail(inspection.inspectionId);
+/* ---------- Upload queue (shared by the Photos step and the camera button on each checklist item) ---------- */
 
-  const remove = useApiMutation({
-    mutationFn: async (e: InspectionEvidenceDto) => {
+export interface Upload {
+  key: string;
+  name: string;
+  preview: string | null;
+  responseId: string | null;
+  progress: number;
+  state: "uploading" | "attaching" | "done" | "error";
+  error?: string;
+  file: File;
+  description: string | null;
+  /** Kept after a successful upload so a failed attach is retried without uploading again. */
+  fileId?: string;
+}
+
+interface Uploads {
+  items: Upload[];
+  add: (files: File[], opts?: { responseId?: string | null; description?: string | null }) => void;
+  retry: (key: string) => void;
+  dismiss: (key: string) => void;
+}
+
+const UploadsContext = React.createContext<Uploads | null>(null);
+
+export function PhotoUploadsProvider({ inspection, children }: { inspection: InspectionDetailDto; children: React.ReactNode }) {
+  const writer = useInspectionWriter();
+  const [items, setItems] = React.useState<Upload[]>([]);
+  const order = React.useRef(0);
+  const patch = React.useCallback((key: string, p: Partial<Upload>) => setItems((list) => list.map((u) => (u.key === key ? { ...u, ...p } : u))), []);
+
+  const process = React.useCallback(
+    async (u: Upload) => {
       try {
-        await inspectionsService.detachEvidence(inspection.inspectionId, e.inspectionEvidenceId, inspection.rowVersion);
-      } catch (err) {
-        if (isConflict(err)) await queryClient.invalidateQueries({ queryKey: detailKey });
-        throw err;
+        let fileId = u.fileId;
+        if (!fileId) {
+          patch(u.key, { state: "uploading", progress: 0, error: undefined });
+          const asset = await filesService.upload(u.file, INSPECTION_EVIDENCE_FILE_PURPOSE, { onProgress: (p) => patch(u.key, { progress: p }) });
+          fileId = asset.fileId;
+          patch(u.key, { fileId });
+        }
+        patch(u.key, { state: "attaching", progress: 1, error: undefined });
+        const id = fileId;
+        await writer.run((rv) =>
+          inspectionsService.attachEvidence(inspection.inspectionId, {
+            fileAssetId: id,
+            inspectionResponseId: u.responseId,
+            // Type follows the file: PDFs are documents, everything else is a photo.
+            evidenceType: u.file.type === "application/pdf" ? "DOCUMENT" : "IMAGE",
+            description: u.description,
+            displayOrder: inspection.evidence.length + order.current++,
+            expectedRowVersion: rv,
+          }),
+        );
+        patch(u.key, { state: "done" });
+        window.setTimeout(() => setItems((list) => list.filter((x) => x.key !== u.key)), 2500);
+      } catch (e) {
+        patch(u.key, { state: "error", error: getErrorMessage(e) });
       }
     },
+    [writer, inspection.inspectionId, inspection.evidence.length, patch],
+  );
+
+  const add = React.useCallback<Uploads["add"]>(
+    (files, opts) => {
+      for (const file of files) {
+        const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const base: Upload = {
+          key,
+          name: file.name,
+          file,
+          preview: file.type.startsWith("image/") && typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : null,
+          responseId: opts?.responseId ?? null,
+          description: opts?.description?.trim() || null,
+          progress: 0,
+          state: "uploading",
+        };
+        // Same checks as inventory-media (MIME type + extension, size) so the inspector learns at once.
+        const problem = file.size > limit.maxBytes ? `Larger than ${formatBytes(limit.maxBytes)}.` : !isAllowedFileType(file, INSPECTION_EVIDENCE_FILE_PURPOSE) ? "Use a JPG, PNG, WebP or PDF file." : null;
+        setItems((list) => [...list, problem ? { ...base, state: "error", error: problem } : base]);
+        if (!problem) void process(base);
+      }
+    },
+    [process],
+  );
+
+  const retry = React.useCallback(
+    (key: string) => {
+      const u = items.find((x) => x.key === key);
+      if (u) void process(u);
+    },
+    [items, process],
+  );
+  const dismiss = React.useCallback((key: string) => setItems((list) => list.filter((x) => x.key !== key)), []);
+  const value = React.useMemo(() => ({ items, add, retry, dismiss }), [items, add, retry, dismiss]);
+  return <UploadsContext.Provider value={value}>{children}</UploadsContext.Provider>;
+}
+
+export function usePhotoUploads(): Uploads {
+  const u = React.useContext(UploadsContext);
+  if (!u) throw new Error("usePhotoUploads needs <PhotoUploadsProvider>");
+  return u;
+}
+
+/** Hidden file input + a function that opens it. `camera` opens the rear camera on phones and tablets. */
+function useFilePicker(onFiles: (files: File[]) => void, opts: { camera?: boolean; multiple?: boolean }) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  const input = (
+    <input
+      ref={ref}
+      type="file"
+      hidden
+      aria-hidden
+      tabIndex={-1}
+      multiple={opts.multiple}
+      accept={opts.camera ? "image/jpeg,image/png,image/webp" : limit.accept}
+      capture={opts.camera ? "environment" : undefined}
+      data-testid={opts.camera ? "camera-input" : "file-input"}
+      onChange={(e) => {
+        const files = Array.from(e.target.files ?? []);
+        e.target.value = "";
+        if (files.length) onFiles(files);
+      }}
+    />
+  );
+  return { input, open: () => ref.current?.click() };
+}
+
+/* ---------- Camera button on a checklist item ---------- */
+
+export function ItemPhotoButton({ inspection, responseId, required, highlight }: { inspection: InspectionDetailDto; responseId: string; required: boolean; highlight?: boolean }) {
+  const uploads = usePhotoUploads();
+  const picker = useFilePicker((files) => uploads.add(files, { responseId }), { camera: true });
+  const stored = inspection.evidence.filter((e) => e.inspectionResponseId === responseId).length;
+  const busy = uploads.items.some((u) => u.responseId === responseId && (u.state === "uploading" || u.state === "attaching"));
+  const failed = uploads.items.some((u) => u.responseId === responseId && u.state === "error");
+  return (
+    <>
+      {picker.input}
+      <button
+        type="button"
+        onClick={picker.open}
+        className={cn(
+          "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors [&_svg]:size-4",
+          stored > 0
+            ? "border-success/40 bg-success-soft text-success-soft-foreground"
+            : required || highlight
+              ? "border-info-soft-foreground/30 bg-info-soft text-info-soft-foreground"
+              : "border-border bg-surface text-muted-foreground hover:text-foreground",
+        )}
+      >
+        {busy ? <SpinnerGapIcon className="animate-spin" /> : stored > 0 ? <CheckCircleIcon weight="fill" /> : <CameraIcon />}
+        {busy ? "Uploading…" : stored > 0 ? `${stored} photo${stored === 1 ? "" : "s"} · add` : required ? "Photo required" : "Add photo"}
+      </button>
+      {failed && <span className="text-xs text-danger">Upload failed. See Photos.</span>}
+    </>
+  );
+}
+
+/* ---------- Photos step ---------- */
+
+function UploadRow({ u }: { u: Upload }) {
+  const uploads = usePhotoUploads();
+  return (
+    <li className="relative aspect-square overflow-hidden rounded-lg border border-border bg-surface-muted">
+      {u.preview ? <img src={u.preview} alt="" className="size-full object-cover opacity-70" /> : <FileIcon className="m-auto mt-8 size-8 text-muted-foreground" />}
+      <div className="absolute inset-x-0 bottom-0 bg-surface/90 p-2 text-xs">
+        {u.state === "error" ? (
+          <div className="space-y-1">
+            <p className="flex items-start gap-1 text-danger">
+              <WarningCircleIcon className="mt-px size-4 shrink-0" /> <span className="line-clamp-2">{u.error}</span>
+            </p>
+            <div className="flex gap-1">
+              {u.file.size <= limit.maxBytes && isAllowedFileType(u.file, INSPECTION_EVIDENCE_FILE_PURPOSE) && (
+                <Button size="sm" variant="secondary" className="h-7 px-2" onClick={() => uploads.retry(u.key)}>
+                  Retry
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => uploads.dismiss(u.key)} aria-label="Dismiss">
+                <XIcon />
+              </Button>
+            </div>
+          </div>
+        ) : u.state === "done" ? (
+          <p className="flex items-center gap-1 text-success">
+            <CheckCircleIcon weight="fill" className="size-4" /> Saved
+          </p>
+        ) : (
+          <div role="progressbar" aria-label={`Uploading ${u.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(u.progress * 100)}>
+            <p className="mb-1 truncate">{u.state === "attaching" ? "Saving…" : `Uploading ${Math.round(u.progress * 100)}%`}</p>
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
+              <div className="h-full bg-action-border transition-all" style={{ width: `${Math.round(u.progress * 100)}%` }} />
+            </div>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function EvidenceTile({ e, label, editable, onRemove, inspectionId }: { e: InspectionEvidenceDto; label: string; editable: boolean; onRemove: () => void; inspectionId: string }) {
+  return (
+    <li className="group relative overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="aspect-square bg-surface-muted">
+        {e.evidenceType === "IMAGE" && e.downloadUrl ? (
+          <img src={e.downloadUrl} alt={e.description || label} loading="lazy" className="size-full object-cover" />
+        ) : (
+          <span className="flex size-full items-center justify-center text-muted-foreground [&_svg]:size-10">{e.evidenceType === "IMAGE" ? <ImageIcon /> : <FileIcon />}</span>
+        )}
+      </div>
+      <div className="space-y-0.5 p-2 text-xs">
+        <p className="truncate font-medium text-foreground" title={label}>
+          {label}
+        </p>
+        {e.description && <p className="truncate text-muted-foreground">{e.description}</p>}
+        <div className="flex items-center justify-between gap-1">
+          <span className="truncate text-muted-foreground">{fmtUtc(e.createdAtUtc)}</span>
+          <SignedFileLink url={e.downloadUrl} refresh={() => inspectionsService.evidenceDownloadUrl(inspectionId, e.inspectionEvidenceId)} />
+        </div>
+      </div>
+      {editable && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove photo"
+          className="absolute right-1.5 top-1.5 flex size-8 cursor-pointer items-center justify-center rounded-full bg-surface/90 text-danger shadow-sm hover:bg-surface"
+        >
+          <TrashIcon className="size-4" />
+        </button>
+      )}
+    </li>
+  );
+}
+
+export function PhotosPanel({ inspection, editable }: { inspection: InspectionDetailDto; editable: boolean }) {
+  const writer = useInspectionWriter();
+  const uploads = usePhotoUploads();
+  const [responseId, setResponseId] = React.useState("");
+  const [description, setDescription] = React.useState("");
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
+  const [removing, setRemoving] = React.useState<InspectionEvidenceDto | null>(null);
+  const addFiles = (files: File[]) => {
+    uploads.add(files, { responseId: responseId || null, description });
+    setDescription("");
+  };
+  const camera = useFilePicker(addFiles, { camera: true });
+  const picker = useFilePicker(addFiles, { multiple: true });
+  const itemLabel = React.useMemo(() => new Map(inspection.responses.map((r) => [r.inspectionResponseId, itemName(r.itemLabelSnapshot)])), [inspection.responses]);
+  const evidence = [...inspection.evidence].sort((a, b) => a.displayOrder - b.displayOrder);
+  const needsPhoto = inspection.responses.filter((r) => r.requiresEvidenceSnapshot);
+  const missing = needsPhoto.filter((r) => !inspection.evidence.some((e) => e.inspectionResponseId === r.inspectionResponseId));
+  const generalCount = inspection.evidence.filter((e) => !e.inspectionResponseId).length;
+
+  const remove = useApiMutation({
+    mutationFn: (e: InspectionEvidenceDto) => writer.run((rv) => inspectionsService.detachEvidence(inspection.inspectionId, e.inspectionEvidenceId, rv)),
     toastOnError: false,
-    invalidate: [detailKey],
-    successMessage: "Evidence removed.",
+    successMessage: "Photo removed.",
     onSuccess: () => setRemoving(null),
   });
 
   return (
     <SectionCard>
-      <PanelTitle title="Evidence" description="Photos and documents captured during the inspection." />
-      {evidence.length === 0 ? (
-        <p className="mb-4 text-sm text-muted-foreground">No evidence attached yet.</p>
-      ) : (
-        <ul className="mb-4 divide-y divide-border rounded-lg border border-border">
-          {evidence.map((e) => (
-            <li key={e.inspectionEvidenceId} className="flex flex-wrap items-start gap-3 px-4 py-3">
-              {e.evidenceType === "IMAGE" && e.downloadUrl ? (
-                <img src={e.downloadUrl} alt={e.description || "Evidence photo"} loading="lazy" className="size-14 shrink-0 rounded-md bg-surface-muted object-cover" />
-              ) : (
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-muted [&_svg]:size-5">{e.evidenceType === "IMAGE" ? <ImageIcon /> : <FileIcon />}</span>
-              )}
-              <div className="min-w-0 flex-1 text-sm">
-                <p className="break-words">{e.description || (e.evidenceType === "IMAGE" ? "Image" : "Document")}</p>
-                <p className="text-xs text-muted-foreground">
-                  {e.inspectionResponseId ? `For: ${itemLabel.get(e.inspectionResponseId) ?? "checklist item"}` : "Whole inspection"} · {fmtUtc(e.createdAtUtc)}
-                </p>
-                <div className="mt-1 text-xs">
-                  <PersonText id={e.createdByUserId} names={names} />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <SignedFileLink url={e.downloadUrl} refresh={() => inspectionsService.evidenceDownloadUrl(inspection.inspectionId, e.inspectionEvidenceId)} />
-                {editable && (
-                  <RowAction label="Remove evidence" tone="danger" onClick={() => { remove.reset(); setRemoving(e); }}>
-                    <TrashIcon />
-                  </RowAction>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+      <PanelTitle title="Photos & documents" description={editable ? "Take photos on site or upload files. Photos taken from a checklist item are linked to it automatically." : undefined} />
+      {needsPhoto.length > 0 && (
+        <div className={cn("mb-4 rounded-lg border p-3 text-sm", missing.length ? "border-warning/40 bg-warning-soft text-warning-soft-foreground" : "border-success/40 bg-success-soft text-success-soft-foreground")}>
+          {missing.length === 0 ? (
+            "Every item that needs a photo has one."
+          ) : (
+            <>
+              <p className="font-medium">
+                {missing.length} item{missing.length === 1 ? " needs" : "s need"} a photo{generalCount > 0 ? " (general photos also count for them)" : ""}:
+              </p>
+              <p className="mt-0.5">{missing.map((r) => itemName(r.itemLabelSnapshot)).join(" · ")}</p>
+            </>
+          )}
+        </div>
       )}
-      {editable ? <UploadEvidence inspection={inspection} nextOrder={evidence.length} /> : null}
+
+      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {editable && (
+          <>
+            <li>
+              {camera.input}
+              <button
+                type="button"
+                onClick={camera.open}
+                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-action-border bg-action-soft text-sm font-semibold text-foreground transition-colors hover:bg-action-soft-strong"
+              >
+                <CameraIcon className="size-9" /> Take photo
+              </button>
+            </li>
+            <li>
+              {picker.input}
+              <button
+                type="button"
+                onClick={picker.open}
+                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-surface text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted"
+              >
+                <UploadSimpleIcon className="size-9" /> Upload files
+                <span className="px-2 text-center text-[11px] font-normal text-muted-foreground">JPG, PNG, WebP, PDF · up to {formatBytes(limit.maxBytes)}</span>
+              </button>
+            </li>
+          </>
+        )}
+        {uploads.items.map((u) => (
+          <UploadRow key={u.key} u={u} />
+        ))}
+        {evidence.map((e) => (
+          <EvidenceTile
+            key={e.inspectionEvidenceId}
+            e={e}
+            inspectionId={inspection.inspectionId}
+            label={e.inspectionResponseId ? (itemLabel.get(e.inspectionResponseId) ?? "Checklist item") : "General"}
+            editable={editable}
+            onRemove={() => {
+              remove.reset();
+              setRemoving(e);
+            }}
+          />
+        ))}
+      </ul>
+      {!editable && evidence.length === 0 && <p className="text-sm text-muted-foreground">No photos or documents.</p>}
+
+      {editable && (
+        <div className="mt-4">
+          <button type="button" className="cursor-pointer text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline" aria-expanded={optionsOpen} onClick={() => setOptionsOpen((o) => !o)}>
+            {optionsOpen ? "Hide options" : "Options: link to an item, add a caption"}
+          </button>
+          {optionsOpen && (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <NativeSelect aria-label="Link the next photo to" value={responseId} onChange={(e) => setResponseId(e.target.value)}>
+                <option value="">General photo (whole inspection)</option>
+                {inspection.responses.map((r) => (
+                  <option key={r.inspectionResponseId} value={r.inspectionResponseId}>
+                    {itemName(r.itemLabelSnapshot)}
+                    {r.requiresEvidenceSnapshot ? " (photo required)" : ""}
+                  </option>
+                ))}
+              </NativeSelect>
+              <Input aria-label="Caption for the next photo" placeholder="Caption (optional)" maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+          )}
+        </div>
+      )}
 
       <ConfirmDialog
         open={removing !== null}
         onOpenChange={(o) => !o && setRemoving(null)}
-        title="Remove evidence?"
-        description="The evidence is detached from this inspection."
+        title="Remove this photo?"
+        description="It is detached from this inspection."
         confirmLabel="Remove"
         loading={remove.isPending}
         onConfirm={() => removing && remove.mutate(removing)}
@@ -89,147 +376,5 @@ export function EvidencePanel({ inspection, editable }: { inspection: Inspection
         <ApiErrorNotice error={remove.error} />
       </ConfirmDialog>
     </SectionCard>
-  );
-}
-
-function UploadEvidence({ inspection, nextOrder }: { inspection: InspectionDetailDto; nextOrder: number }) {
-  const queryClient = useQueryClient();
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const cameraRef = React.useRef<HTMLInputElement>(null);
-  const [file, setFile] = React.useState<File | null>(null);
-  const [type, setType] = React.useState<InspectionEvidenceType>("IMAGE");
-  const [responseId, setResponseId] = React.useState("");
-  const [description, setDescription] = React.useState("");
-  const [progress, setProgress] = React.useState<number | null>(null);
-  // Keeps the uploaded file id so a failed attach can be retried without uploading again.
-  const [uploadedId, setUploadedId] = React.useState<string | null>(null);
-  const [fileError, setFileError] = React.useState<string | null>(null);
-  const detailKey = inspectionKeys.detail(inspection.inspectionId);
-
-  const mutation = useApiMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error("Choose a file.");
-      let fileId = uploadedId;
-      if (!fileId) {
-        setProgress(0);
-        const asset = await filesService.upload(file, INSPECTION_EVIDENCE_FILE_PURPOSE, { onProgress: setProgress });
-        fileId = asset.fileId;
-        setUploadedId(fileId);
-      }
-      setProgress(null);
-      try {
-        return await inspectionsService.attachEvidence(inspection.inspectionId, {
-          fileAssetId: fileId,
-          inspectionResponseId: responseId || null,
-          evidenceType: type,
-          description: description.trim() || null,
-          displayOrder: nextOrder,
-          expectedRowVersion: inspection.rowVersion,
-        });
-      } catch (e) {
-        if (isConflict(e)) await queryClient.invalidateQueries({ queryKey: detailKey });
-        throw e;
-      }
-    },
-    toastOnError: false,
-    invalidate: [detailKey],
-    successMessage: "Evidence attached.",
-    onSuccess: () => {
-      setFile(null);
-      setUploadedId(null);
-      setDescription("");
-      setResponseId("");
-      if (inputRef.current) inputRef.current.value = "";
-      if (cameraRef.current) cameraRef.current.value = "";
-    },
-  });
-
-  const onFile = (f: File | null) => {
-    setUploadedId(null);
-    setFileError(null);
-    mutation.reset();
-    if (f && f.size > limit.maxBytes) {
-      setFileError(`The file is larger than ${formatBytes(limit.maxBytes)}.`);
-      setFile(null);
-      return;
-    }
-    // inventory-media checks both MIME type and extension (FileAssetService.cs:58-60).
-    if (f && !isAllowedFileType(f, INSPECTION_EVIDENCE_FILE_PURPOSE)) {
-      setFileError("Use a PDF, JPG, PNG or WebP file (.pdf, .jpg, .jpeg, .png or .webp).");
-      setFile(null);
-      return;
-    }
-    setFile(f);
-    if (f) setType(f.type === "application/pdf" ? "DOCUMENT" : "IMAGE");
-  };
-
-  return (
-    <form
-      className="@container space-y-3 rounded-lg border border-dashed border-secondary-border p-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (file) mutation.mutate();
-      }}
-    >
-      <p className="font-heading text-sm font-bold">Add evidence</p>
-      <div className="grid gap-3 @lg:grid-cols-2">
-        <div className="space-y-2">
-          <FormField label="File" htmlFor="evidence-file" required hint={`PDF, JPG, PNG or WebP up to ${formatBytes(limit.maxBytes)}.`} error={fileError ?? undefined}>
-            <Input ref={inputRef} type="file" accept={limit.accept} onChange={(e) => onFile(e.target.files?.[0] ?? null)} />
-          </FormField>
-          {/* Phones/tablets: opens the rear camera directly. Desktops fall back to the file picker. */}
-          <input
-            ref={cameraRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            capture="environment"
-            hidden
-            aria-hidden
-            tabIndex={-1}
-            data-testid="evidence-camera"
-            onChange={(e) => {
-              if (inputRef.current) inputRef.current.value = "";
-              onFile(e.target.files?.[0] ?? null);
-            }}
-          />
-          <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => cameraRef.current?.click()}>
-            <CameraIcon /> Take photo
-          </Button>
-          {file && <p className="truncate text-xs text-muted-foreground">Selected: {file.name}</p>}
-        </div>
-        <FormField label="Type" htmlFor="evidence-type" required>
-          <NativeSelect value={type} onChange={(e) => setType(e.target.value as InspectionEvidenceType)}>
-            <option value="IMAGE">Image</option>
-            <option value="DOCUMENT">Document</option>
-          </NativeSelect>
-        </FormField>
-        <FormField label="Checklist item" htmlFor="evidence-item" hint="Evidence not linked to an item counts for every item that requires evidence.">
-          <NativeSelect value={responseId} onChange={(e) => setResponseId(e.target.value)}>
-            <option value="">Whole inspection</option>
-            {inspection.responses.map((r) => (
-              <option key={r.inspectionResponseId} value={r.inspectionResponseId}>
-                {r.itemLabelSnapshot}
-                {r.requiresEvidenceSnapshot ? " (evidence required)" : ""}
-              </option>
-            ))}
-          </NativeSelect>
-        </FormField>
-        <FormField label="Description" htmlFor="evidence-description" hint={`${description.length}/500`}>
-          <Input maxLength={500} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </FormField>
-      </div>
-      {progress !== null && mutation.isPending && (
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-          <div className="h-full bg-action-border transition-all" style={{ width: `${Math.round(progress * 100)}%` }} />
-        </div>
-      )}
-      {uploadedId && mutation.error ? <Notice>The file was uploaded; retrying will only re-attach it.</Notice> : null}
-      <ApiErrorNotice error={mutation.error} />
-      <div className="flex justify-end">
-        <Button type="submit" variant="primary" disabled={!file} loading={mutation.isPending}>
-          <UploadSimpleIcon /> {uploadedId ? "Retry attach" : "Upload and attach"}
-        </Button>
-      </div>
-    </form>
   );
 }

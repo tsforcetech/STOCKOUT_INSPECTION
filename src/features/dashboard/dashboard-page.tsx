@@ -1,8 +1,11 @@
+import * as React from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightIcon, CheckCircleIcon, ClipboardTextIcon, HourglassIcon, NotePencilIcon, ScalesIcon, SpinnerGapIcon, UserCheckIcon } from "@phosphor-icons/react";
+import { ArrowRightIcon, CheckCircleIcon, ClipboardTextIcon, HourglassIcon, MagnifyingGlassIcon, NotePencilIcon, PlayIcon, ScalesIcon, SpinnerGapIcon, UserCheckIcon } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/common/page-header";
-import { StatCards } from "@/components/common/stat-cards";
+import { Input } from "@/components/ui/input";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { cn } from "@/lib/utils/cn";
 import { SectionCard } from "@/components/common/section-card";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -13,15 +16,76 @@ import type { InspectionQueueQuery } from "@/api/types/catalog-moderation";
 import { disputesService } from "@/services/disputes.service";
 import { useInspectionQueueQuery } from "@/features/inspections/queries";
 import { useCorrectionsQuery } from "@/features/corrections/queries";
-import { InspectionCardList } from "@/features/inspections/inspection-card";
+import { InspectionCardList, milestone } from "@/features/inspections/inspection-card";
+import { shortId } from "@/features/listings/shared";
+import type { InspectionSummaryDto } from "@/api/types/catalog-moderation";
 
 function greeting(now = new Date()) {
   const h = now.getHours();
   return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 }
 
-function count(q: { data?: { totalCount?: number }; isLoading: boolean; error: unknown }) {
-  return { value: formatNumber(q.data?.totalCount), loading: q.isLoading, unavailable: q.error ? "Unavailable" : undefined };
+type CountQuery = { data?: { totalCount?: number }; isLoading: boolean; error: unknown };
+
+function Chip({ to, icon, label, q }: { to: string; icon: React.ReactNode; label: string; q: CountQuery }) {
+  return (
+    <Link to={to} className="flex shrink-0 items-center gap-2 rounded-full border border-border bg-surface py-2 pl-3 pr-4 text-sm text-foreground transition-colors hover:border-secondary-border [&_svg]:size-4">
+      {icon}
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-heading text-base font-bold tabular-nums">{q.isLoading ? "…" : q.error ? "—" : formatNumber(q.data?.totalCount)}</span>
+    </Link>
+  );
+}
+
+/** The one inspection to pick up next: in progress first, then the oldest assigned. */
+function ContinueCard({ inspection: i }: { inspection: InspectionSummaryDto }) {
+  const started = i.status === "IN_PROGRESS";
+  return (
+    <Link
+      to={`/inspections/${i.inspectionId}`}
+      className="mb-4 flex items-center gap-4 rounded-xl bg-ink p-4 text-ink-foreground shadow-sm transition-opacity hover:opacity-95 sm:p-5"
+    >
+      <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-action text-action-foreground">
+        <PlayIcon weight="fill" className="size-6" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold uppercase tracking-wide opacity-70">{started ? "Continue" : "Next up"}</span>
+        <span className="block truncate font-heading text-lg font-bold">{i.listingTitle ?? `Listing ${shortId(i.listingId)}`}</span>
+        <span className="block truncate text-sm opacity-80">
+          {i.inspectionNo} · {milestone(i)}
+        </span>
+      </span>
+      <ArrowRightIcon className="size-6 shrink-0" />
+    </Link>
+  );
+}
+
+/** Finds an inspection by number or listing name among the 100 most recent (the queue API has no text search). */
+function Search({ enabled }: { enabled: boolean }) {
+  const [text, setText] = React.useState("");
+  const q = useDebouncedValue(text.trim().toLowerCase(), 250);
+  const recent = useInspectionQueueQuery({ page: 1, pageSize: 100 }, enabled && q.length >= 2);
+  const hits = q.length >= 2 ? (recent.data?.items ?? []).filter((i) => i.inspectionNo.toLowerCase().includes(q) || (i.listingTitle ?? "").toLowerCase().includes(q)).slice(0, 6) : [];
+  return (
+    <div className="mb-4">
+      <div className="relative">
+        <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+        <Input type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Find by inspection number or listing name" aria-label="Find an inspection" className="h-12 pl-10 text-base" />
+      </div>
+      {q.length >= 2 && (
+        <div className={cn("mt-2 rounded-lg border border-border bg-surface p-2")}>
+          <InspectionCardList
+            items={hits}
+            isLoading={recent.isLoading}
+            error={recent.error}
+            showInspector={false}
+            emptyTitle="No match"
+            emptyDescription="Searches the 100 most recent inspections. Use All inspections for older ones."
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ListHeader({ title, description, to, linkLabel = "View all" }: { title: string; description?: string; to: string; linkLabel?: string }) {
@@ -60,31 +124,23 @@ export default function DashboardPage() {
   });
 
   const active = [...(myInProgress.data?.items ?? []), ...(myAssigned.data?.items ?? [])];
+  const next = active[0];
   const name = user?.firstName || user?.displayName?.split(" ")[0] || "";
 
   return (
     <>
-      <PageHeader
-        eyebrow="StockOut inspection"
-        title={`${greeting()}${name ? `, ${name}` : ""}`}
-        description="Your inspection work at a glance: what's assigned to you, what's in progress and what's waiting."
-        actions={
-          <Button variant="action" size="lg" className="h-12 w-full text-base sm:w-auto" asChild>
-            <Link to="/my">
-              <UserCheckIcon /> My inspections
-            </Link>
-          </Button>
-        }
-      />
-      <StatCards
-        className="mb-4"
-        items={[
-          { label: "Assigned to me", hint: "Ready to start", icon: <UserCheckIcon />, ...count(myAssigned) },
-          { label: "In progress", hint: "Started by me", icon: <SpinnerGapIcon />, ...count(myInProgress) },
-          { label: "Completed by me", hint: "All time", icon: <CheckCircleIcon />, ...count(myCompleted) },
-          { label: "Waiting for inspector", hint: "Unassigned in the queue", icon: <HourglassIcon />, ...count(pending) },
-        ]}
-      />
+      <PageHeader eyebrow="StockOut inspection" title={`${greeting()}${name ? `, ${name}` : ""}`} />
+
+      {next && <ContinueCard inspection={next} />}
+
+      <div className="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="My numbers">
+        <Chip to="/my?tab=ASSIGNED" icon={<UserCheckIcon />} label="To start" q={myAssigned} />
+        <Chip to="/my?tab=IN_PROGRESS" icon={<SpinnerGapIcon />} label="In progress" q={myInProgress} />
+        <Chip to="/my?tab=COMPLETED" icon={<CheckCircleIcon />} label="Done by me" q={myCompleted} />
+        <Chip to="/inspections?status=PENDING" icon={<HourglassIcon />} label="Waiting" q={pending} />
+      </div>
+
+      <Search enabled={canView} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <SectionCard>

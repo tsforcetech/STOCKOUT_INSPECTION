@@ -45,13 +45,28 @@ const TONES: Record<string, BadgeTone> = {
   RETIRED: "neutral",
 };
 
+/** Plain words for inspectors (the backend codes stay unchanged). */
+const LABELS: Record<string, string> = {
+  PENDING: "Waiting",
+  ASSIGNED: "To start",
+  IN_PROGRESS: "In progress",
+  COMPLETED: "Done",
+  REINSPECTION_REQUIRED: "Re-inspect",
+  NOT_APPLICABLE: "N/A",
+  AWAITING_SELLER_DECISION: "Waiting for seller",
+  READY_FOR_MODERATION: "Ready to submit",
+  SUBMITTED_TO_MODERATION: "In moderation",
+  SELLER_ACCEPTED: "Seller accepted",
+  SELLER_DECLINED: "Seller declined",
+};
+
 /** Figma status pill: small dot + label. Tone is derived from the backend value. */
 export function StatusBadge({ value, label }: { value: string | null | undefined; label?: string }) {
   if (!value) return <span className="text-muted-foreground">—</span>;
   const tone = TONES[value.toUpperCase().replace(/\s+/g, "_")] ?? "neutral";
   return (
     <Badge tone={tone} dot>
-      {label ?? humanize(value)}
+      {label ?? LABELS[value.toUpperCase()] ?? humanize(value)}
     </Badge>
   );
 }

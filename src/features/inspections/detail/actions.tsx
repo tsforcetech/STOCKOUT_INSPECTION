@@ -21,7 +21,8 @@ import { listingKeys } from "@/features/listings/queries";
 import { ApiErrorNotice, GUID_RE, Notice, isConflict, isGuid } from "@/features/listings/shared";
 import { inspectionKeys } from "../queries";
 
-type Open = "assign" | "reassign" | "start" | "complete" | "cancel" | "reinspect" | null;
+export type ActionKind = "assign" | "reassign" | "start" | "complete" | "cancel" | "reinspect";
+type Open = ActionKind | null;
 
 /** Who may act as the inspector: the assignee, or anyone with the supervisor override. */
 export function useInspectorRights(assignedInspectorUserId: string | null | undefined) {
@@ -32,16 +33,14 @@ export function useInspectorRights(assignedInspectorUserId: string | null | unde
   return { isAssignee, canAct };
 }
 
-export function InspectionActions({ inspection }: { inspection: InspectionDetailDto }) {
+/** Which actions the signed-in user may take on this inspection right now. */
+export function useActionFlags(inspection: InspectionDetailDto): Record<ActionKind, boolean> {
   const { can } = useAccess();
   const { canAct } = useInspectorRights(inspection.assignedInspectorUserId);
-  const [open, setOpen] = React.useState<Open>(null);
   const s = inspection.status;
-  const close = () => setOpen(null);
-
   const canAssign = can(P.INSPECTIONS_ASSIGN);
   const canOverride = can(P.INSPECTIONS_OVERRIDE);
-  const actions = {
+  return {
     assign: s === "PENDING" && canAssign,
     reassign: (s === "ASSIGNED" || s === "IN_PROGRESS") && canAssign,
     start: s === "ASSIGNED" && canAct,
@@ -49,8 +48,25 @@ export function InspectionActions({ inspection }: { inspection: InspectionDetail
     cancel: (s === "PENDING" || s === "ASSIGNED" || s === "IN_PROGRESS") && canOverride,
     reinspect: s === "COMPLETED" && (inspection.result === "FAIL" || inspection.result === "REINSPECTION_REQUIRED") && canOverride,
   };
-  const any = Object.values(actions).some(Boolean);
+}
 
+/** All action dialogs, opened by kind (the page decides where the buttons live). */
+export function InspectionDialogs({ inspection, open, onClose }: { inspection: InspectionDetailDto; open: ActionKind | null; onClose: () => void }) {
+  return (
+    <>
+      <AssignDialog open={open === "assign" || open === "reassign"} mode={open === "reassign" ? "reassign" : "assign"} inspection={inspection} onClose={onClose} />
+      <StartDialog open={open === "start"} inspection={inspection} onClose={onClose} />
+      <CompleteDialog open={open === "complete"} inspection={inspection} onClose={onClose} />
+      <CancelDialog open={open === "cancel"} inspection={inspection} onClose={onClose} />
+      <ReinspectDialog open={open === "reinspect"} inspection={inspection} onClose={onClose} />
+    </>
+  );
+}
+
+/** Self-contained button row (used where there is no step layout). */
+export function InspectionActions({ inspection }: { inspection: InspectionDetailDto }) {
+  const [open, setOpen] = React.useState<Open>(null);
+  const actions = useActionFlags(inspection);
   return (
     <>
       <div className="flex flex-wrap gap-2">
@@ -85,13 +101,7 @@ export function InspectionActions({ inspection }: { inspection: InspectionDetail
           </Button>
         )}
       </div>
-      {!any && s !== "COMPLETED" && s !== "CANCELLED" && <span className="sr-only">No actions available with your permissions.</span>}
-
-      <AssignDialog open={open === "assign" || open === "reassign"} mode={open === "reassign" ? "reassign" : "assign"} inspection={inspection} onClose={close} />
-      <StartDialog open={open === "start"} inspection={inspection} onClose={close} />
-      <CompleteDialog open={open === "complete"} inspection={inspection} onClose={close} />
-      <CancelDialog open={open === "cancel"} inspection={inspection} onClose={close} />
-      <ReinspectDialog open={open === "reinspect"} inspection={inspection} onClose={close} />
+      <InspectionDialogs inspection={inspection} open={open} onClose={() => setOpen(null)} />
     </>
   );
 }
@@ -104,7 +114,7 @@ function useResetOnOpen(open: boolean, reset: () => void) {
 }
 
 /** Shared mutation wrapper: reloads the detail on a rowVersion conflict, refreshes queue + listing caches on success. */
-function useInspectionMutation<TVars, TData>(inspection: InspectionDetailDto, fn: (vars: TVars) => Promise<TData>, successMessage: string | ((d: TData) => string), onSuccess?: (d: TData) => void) {
+export function useInspectionMutation<TVars, TData>(inspection: InspectionDetailDto, fn: (vars: TVars) => Promise<TData>, successMessage: string | ((d: TData) => string), onSuccess?: (d: TData) => void) {
   const queryClient = useQueryClient();
   const key = inspectionKeys.detail(inspection.inspectionId);
   return useApiMutation<TData, TVars>({
@@ -262,7 +272,7 @@ function StartDialog({ open, inspection, onClose }: { open: boolean; inspection:
   useResetOnOpen(open, mutation.reset);
 }
 
-const completeSchema = z
+export const completeSchema = z
   .object({
     result: z.enum(["PASS", "FAIL", "REINSPECTION_REQUIRED"]),
     summary: z.string().max(2000),
@@ -274,7 +284,7 @@ const completeSchema = z
     if (!v.failureReasonCode) ctx.addIssue({ code: "custom", path: ["failureReasonCode"], message: "A failure reason code is required." });
     if (v.failureNotes.trim().length < 10) ctx.addIssue({ code: "custom", path: ["failureNotes"], message: "Failure notes must be at least 10 characters." });
   });
-type CompleteValues = z.infer<typeof completeSchema>;
+export type CompleteValues = z.infer<typeof completeSchema>;
 
 function CompleteDialog({ open, inspection, onClose }: { open: boolean; inspection: InspectionDetailDto; onClose: () => void }) {
   const form = useForm<CompleteValues>({ resolver: zodResolver(completeSchema), defaultValues: { result: "PASS", summary: "", failureReasonCode: "", failureNotes: "" } });

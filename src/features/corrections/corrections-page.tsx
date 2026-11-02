@@ -5,6 +5,8 @@ import { XIcon } from "@phosphor-icons/react";
 import { PageHeader } from "@/components/common/page-header";
 import { SectionCard, Toolbar, RefreshButton } from "@/components/common/section-card";
 import { DataTable } from "@/components/tables/data-table";
+import { CardList, MoreFilters } from "@/components/common/card-list";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/misc";
 import { NativeSelect } from "@/components/ui/input";
@@ -31,6 +33,8 @@ function CorrectionsContent() {
     inspectionId: state.inspection,
   });
   const hasFilters = !!(state.status || state.seller || state.listing || state.inspection);
+  const isPhone = useMediaQuery("(max-width: 767px)");
+  const [more, setMore] = React.useState(false);
 
   const columns = React.useMemo<ColumnDef<AdminListingCorrectionDto, unknown>[]>(
     () => [
@@ -71,11 +75,39 @@ function CorrectionsContent() {
             </>
           }
         />
-        <div className="-mt-1 mb-4 grid gap-2 sm:grid-cols-3">
+        <MoreFilters isPhone={isPhone} open={more} onToggle={() => setMore((v) => !v)} active={!!(state.seller || state.listing || state.inspection)} />
+        <div hidden={isPhone && !more} className="-mt-1 mb-4 grid gap-2 sm:grid-cols-3">
           <GuidFilterInput className="sm:w-full" value={state.seller} onChange={(seller) => setState({ seller }, { resetPage: true })} label="Seller ID" placeholder="Seller ID" />
           <GuidFilterInput className="sm:w-full" value={state.listing} onChange={(listing) => setState({ listing }, { resetPage: true })} label="Listing ID" placeholder="Listing ID" />
           <GuidFilterInput className="sm:w-full" value={state.inspection} onChange={(inspection) => setState({ inspection }, { resetPage: true })} label="Inspection ID" placeholder="Inspection ID" />
         </div>
+        {isPhone ? (
+          <CardList
+            label="Listing corrections"
+            rows={(q.data?.items ?? []).map((c) => ({
+              id: c.correctionId,
+              to: `/corrections/${c.correctionId}`,
+              title: c.correctionNo,
+              badge: <CorrectionStatusBadge status={c.status} />,
+              lines: [
+                c.changes.map((x) => FIELD_LABEL[x.field] ?? x.field).join(", ") || "No field changes",
+                <>
+                  <PersonText id={c.sellerId} names={sellers} /> · LST-{shortId(c.listingId)}
+                </>,
+                `Proposed ${fmtUtc(c.createdAtUtc)}${c.requiresSellerAcceptance ? " · seller must accept" : ""}`,
+              ],
+            }))}
+            isLoading={q.isLoading}
+            error={q.error}
+            onRetry={() => q.refetch()}
+            emptyTitle={hasFilters ? "No proposals match these filters" : "No correction proposals yet"}
+            emptyDescription="Propose a correction from an inspection's Details step."
+            page={state.page}
+            pageSize={state.pageSize}
+            totalCount={q.data?.totalCount ?? 0}
+            onPageChange={(page) => setState({ page })}
+          />
+        ) : (
         <DataTable
           caption="Listing corrections"
           columns={columns}
@@ -96,6 +128,7 @@ function CorrectionsContent() {
           emptyTitle={hasFilters ? "No proposals match these filters" : "No correction proposals yet"}
           emptyDescription="Inspectors propose corrections from an inspection's page."
         />
+        )}
       </SectionCard>
     </>
   );

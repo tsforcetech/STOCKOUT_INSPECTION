@@ -1,21 +1,22 @@
 import * as React from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { CaretDownIcon, CheckIcon, ChecksIcon, NotePencilIcon, XIcon } from "@phosphor-icons/react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { ItemPhotoButton } from "./evidence";
+import { useInspectionWriter } from "./writer";
+import { useQuery } from "@tanstack/react-query";
 import { SectionCard } from "@/components/common/section-card";
 import { StatusBadge } from "@/components/common/status-badge";
 import { FilterPills } from "@/components/common/filter-pills";
 import { Button } from "@/components/ui/button";
 import { Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/misc";
-import { useApiMutation } from "@/hooks/use-api-mutation";
 import { useAccess } from "@/lib/auth/use-access";
 import { cn } from "@/lib/utils/cn";
 import { PERMISSIONS as P } from "@/api/types/user-organization";
 import type { InspectionDetailDto, InspectionItemResult, InspectionResponseDto, SaveInspectionResponseItem } from "@/api/types/catalog-moderation";
 import { inspectionsService } from "@/services/inspections.service";
-import { ApiErrorNotice, Notice, PanelTitle, fmtUtc, isConflict } from "@/features/listings/shared";
+import { ApiErrorNotice, Notice, PanelTitle, fmtUtc } from "@/features/listings/shared";
 import { inspectionKeys } from "../queries";
 
 /* allowedOptionsJson has no backend-defined structure. Accept the common shapes; otherwise free text. */
@@ -319,7 +320,7 @@ function AnswerInput({ r, i, options, form, numberError }: { r: InspectionRespon
 
 const resultBar: Record<string, string> = { PASS: "before:bg-success", FAIL: "before:bg-danger", NOT_APPLICABLE: "before:bg-muted-foreground/50" };
 
-function ItemTitle({ r, description }: { r: InspectionResponseDto; description: string | null }) {
+function ItemTitle({ r, description, editable }: { r: InspectionResponseDto; description: string | null; editable?: boolean }) {
   const critical = CRITICAL.test(r.itemLabelSnapshot);
   return (
     <div className="min-w-0">
@@ -331,54 +332,87 @@ function ItemTitle({ r, description }: { r: InspectionResponseDto; description: 
           </span>
         )}
       </p>
-      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-        <span className="font-mono text-[11px] text-muted-foreground">{r.itemCodeSnapshot}</span>
+      <div className="mt-1 flex flex-wrap items-center gap-1.5 empty:hidden">
         {critical && <Badge tone="danger">Critical</Badge>}
-        {r.requiresEvidenceSnapshot && <Badge tone="info">Evidence required</Badge>}
+        {r.requiresEvidenceSnapshot && !editable && <Badge tone="info">Photo required</Badge>}
       </div>
       {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
     </div>
   );
 }
 
-function EditableItem({ r, i, options, form, description, numberError }: { r: InspectionResponseDto; i: number; options: string[] | null; form: UseFormReturn<FormValues>; description: string | null; numberError?: string }) {
+function EditableItem({
+  r,
+  i,
+  options,
+  form,
+  description,
+  numberError,
+  inspection,
+  onAnswered,
+}: {
+  r: InspectionResponseDto;
+  i: number;
+  options: string[] | null;
+  form: UseFormReturn<FormValues>;
+  description: string | null;
+  numberError?: string;
+  inspection: InspectionDetailDto;
+  onAnswered: (i: number) => void;
+}) {
   const v = form.watch(`items.${i}`);
   const [noteOpen, setNoteOpen] = React.useState(() => !!v.notes);
   const isPassFail = r.responseTypeSnapshot === "PASS_FAIL";
+  const failed = v.itemResult === "FAIL";
   const setResult = (x: string) => {
     const next = (v.itemResult === x ? "" : x) as ItemValues["itemResult"];
     form.setValue(`items.${i}.itemResult`, next, { shouldDirty: true });
     if (isPassFail) form.setValue(`items.${i}.passFail`, next === "PASS" || next === "FAIL" ? next : "", { shouldDirty: true });
+    if (next === "FAIL") setNoteOpen(true);
+    else if (next) onAnswered(i);
   };
   const answer = <AnswerInput r={r} i={i} options={options} form={form} numberError={numberError} />;
   return (
     <li
+      data-item={i}
       className={cn(
-        "relative space-y-3 overflow-hidden rounded-lg border border-border bg-surface p-3 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 sm:p-4 sm:pl-5",
+        "relative scroll-mt-40 space-y-3 overflow-hidden rounded-lg border border-border bg-surface p-3 pl-4 before:absolute before:inset-y-0 before:left-0 before:w-1 sm:p-4 sm:pl-5",
         resultBar[v.itemResult] ?? "before:bg-transparent",
+        failed && "border-danger/40",
       )}
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <ItemTitle r={r} description={description} />
-        <div className="shrink-0">
+        <ItemTitle r={r} description={description} editable />
+        <div className="shrink-0 [&_button]:min-h-11 [&_button]:px-4 [&_button]:text-base md:[&_button]:min-h-9 md:[&_button]:px-3 md:[&_button]:text-sm">
           <Choices label={`Result: ${r.itemLabelSnapshot.replace(CRITICAL, "")}`} value={v.itemResult} onChange={setResult} choices={RESULT_CHOICES} />
         </div>
       </div>
       {answer}
       {noteOpen ? (
-        <Textarea aria-label={`Inspector notes: ${r.itemLabelSnapshot.replace(CRITICAL, "")}`} rows={2} maxLength={2000} placeholder="Inspector notes" autoFocus={!v.notes} {...form.register(`items.${i}.notes`)} />
-      ) : (
-        <button type="button" onClick={() => setNoteOpen(true)} className="inline-flex cursor-pointer items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
-          <NotePencilIcon aria-hidden /> Add note
-        </button>
-      )}
+        <Textarea
+          aria-label={`Inspector notes: ${r.itemLabelSnapshot.replace(CRITICAL, "")}`}
+          rows={2}
+          maxLength={2000}
+          placeholder={failed ? "What is wrong? (helps the seller and the reviewer)" : "Inspector notes"}
+          autoFocus={!v.notes}
+          {...form.register(`items.${i}.notes`)}
+        />
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <ItemPhotoButton inspection={inspection} responseId={r.inspectionResponseId} required={r.requiresEvidenceSnapshot} highlight={failed} />
+        {!noteOpen && (
+          <button type="button" onClick={() => setNoteOpen(true)} className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-muted-foreground hover:text-foreground">
+            <NotePencilIcon aria-hidden className="size-4" /> Add note
+          </button>
+        )}
+      </div>
     </li>
   );
 }
 
 /* ---------- Panel ---------- */
 
-type View = "all" | "todo" | "required" | "failed";
+type View = "all" | "todo" | "failed";
 
 function Progress({ done, total, label }: { done: number; total: number; label: string }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -397,9 +431,10 @@ function Progress({ done, total, label }: { done: number; total: number; label: 
   );
 }
 
+const AUTOSAVE_MS = 800;
+
 export function ChecklistPanel({ inspection, editable }: { inspection: InspectionDetailDto; editable: boolean }) {
   const { can } = useAccess();
-  const queryClient = useQueryClient();
   const responses = React.useMemo(() => [...inspection.responses].sort((a, b) => a.displayOrderSnapshot - b.displayOrderSnapshot), [inspection.responses]);
   const sections = React.useMemo(() => buildSections(responses), [responses]);
   const canReadTemplate = can(P.INSPECTIONS_TEMPLATES_MANAGE);
@@ -417,48 +452,82 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
 
   // Initialised once per inspection: refetches never overwrite what the inspector has typed.
   const form = useForm<FormValues>({ defaultValues: { items: responses.map(toValues) } });
-  const [notPersisted, setNotPersisted] = React.useState<number | null>(null);
-  const [view, setView] = React.useState<View>("all");
+  const initialRemaining = React.useRef(responses.filter((r) => !r.itemResult).length);
+  const [view, setView] = React.useState<View>(() => (editable && initialRemaining.current > 0 && initialRemaining.current < responses.length ? "todo" : "all"));
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set());
+  const [confirmAllPass, setConfirmAllPass] = React.useState<Array<{ r: InspectionResponseDto; i: number }> | null>(null);
   const live = form.watch("items");
+  const listRef = React.useRef<HTMLDivElement>(null);
 
-  const save = useApiMutation({
-    mutationFn: async (values: FormValues) => {
-      const payload = responses.map((r, i) => toPayload(r, values.items[i], optionsFor(r)));
-      try {
-        const result = await inspectionsService.saveResponses(inspection.inspectionId, { expectedRowVersion: inspection.rowVersion, responses: payload });
-        const byId = new Map(result.responses.map((x) => [x.inspectionResponseId, x]));
-        return payload.filter((p) => !reflects(p, byId.get(p.inspectionResponseId))).length;
-      } catch (e) {
-        if (isConflict(e)) await queryClient.invalidateQueries({ queryKey: inspectionKeys.detail(inspection.inspectionId) });
-        throw e;
-      }
-    },
-    toastOnError: false,
-    // The rowVersion advances even when nothing is stored, so always reload the detail.
-    invalidate: [inspectionKeys.detail(inspection.inspectionId)],
-    onSuccess: (missing, values) => {
-      setNotPersisted(missing);
-      if (missing === 0) {
-        form.reset(values);
-        toast.success("Checklist responses saved.");
-      }
-    },
-  });
+  /* ----- Autosave: every change is stored automatically, one request at a time. ----- */
+  const writer = useInspectionWriter();
+  const { setSaveState } = writer;
+  const [error, setError] = React.useState<unknown>(null);
+  const [notPersisted, setNotPersisted] = React.useState(0);
+  const lastSaved = React.useRef(JSON.stringify(responses.map(toValues)));
+  const saving = React.useRef(false);
+  const liveJson = JSON.stringify(live);
 
-  const onSubmit = form.handleSubmit((values) => {
+  const saveNow = React.useCallback(async () => {
+    if (saving.current) return;
+    const values = form.getValues();
+    const json = JSON.stringify(values.items);
+    if (json === lastSaved.current) {
+      setSaveState("saved");
+      return;
+    }
     let ok = true;
     responses.forEach((r, i) => {
-      if (r.responseTypeSnapshot === "NUMBER" && values.items[i].number.trim() !== "" && !Number.isFinite(Number(values.items[i].number))) {
+      const n = values.items[i].number;
+      if (r.responseTypeSnapshot === "NUMBER" && n.trim() !== "" && !Number.isFinite(Number(n))) {
         form.setError(`items.${i}.number`, { message: "Enter a number." });
         ok = false;
       }
     });
-    if (ok) {
-      setNotPersisted(null);
-      save.mutate(values);
+    if (!ok) {
+      setSaveState("error");
+      return;
     }
-  });
+    saving.current = true;
+    setSaveState("saving");
+    const payload = responses.map((r, i) => toPayload(r, values.items[i], optionsFor(r)));
+    try {
+      const result = await writer.run(
+        (rv) => inspectionsService.saveResponses(inspection.inspectionId, { expectedRowVersion: rv, responses: payload }),
+        (res) => res.rowVersion,
+      );
+      const byId = new Map(result.responses.map((x) => [x.inspectionResponseId, x]));
+      const missing = payload.filter((p) => !reflects(p, byId.get(p.inspectionResponseId))).length;
+      setNotPersisted(missing);
+      setError(null);
+      if (missing === 0) lastSaved.current = json;
+      saving.current = false;
+      // Anything typed while this save was in flight is saved next.
+      if (JSON.stringify(form.getValues().items) !== lastSaved.current && missing === 0) void saveNow();
+      else setSaveState(missing ? "error" : "saved");
+    } catch (e) {
+      saving.current = false;
+      setError(e);
+      setSaveState("error");
+    }
+  }, [form, responses, optionsFor, writer, inspection.inspectionId, setSaveState]);
+
+  React.useEffect(() => {
+    if (!editable || liveJson === lastSaved.current) return;
+    setSaveState("pending");
+    const t = window.setTimeout(() => void saveNow(), AUTOSAVE_MS);
+    return () => window.clearTimeout(t);
+  }, [liveJson, editable, saveNow, setSaveState]);
+
+  // Save straight away when the inspector leaves the page or switches app.
+  React.useEffect(() => {
+    if (!editable) return;
+    const flush = () => {
+      if (document.visibilityState === "hidden") void saveNow();
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, [editable, saveNow]);
 
   const storedRequired = responses.filter((r) => r.isRequiredSnapshot && r.itemResult).length;
   const required = responses.filter((r) => r.isRequiredSnapshot).length;
@@ -475,10 +544,8 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
 
   const resultOf = (i: number) => live?.[i]?.itemResult ?? "";
   const done = responses.filter((_, i) => resultOf(i)).length;
-  const doneRequired = responses.filter((r, i) => r.isRequiredSnapshot && resultOf(i)).length;
   const failed = responses.filter((_, i) => resultOf(i) === "FAIL").length;
-  const matches = (r: InspectionResponseDto, i: number) =>
-    view === "all" || (view === "todo" && !resultOf(i)) || (view === "required" && r.isRequiredSnapshot && !resultOf(i)) || (view === "failed" && resultOf(i) === "FAIL");
+  const matches = (_r: InspectionResponseDto, i: number) => view === "all" || (view === "todo" && !resultOf(i)) || (view === "failed" && resultOf(i) === "FAIL");
   const passRemaining = (rows: Array<{ r: InspectionResponseDto; i: number }>) => {
     for (const { r, i } of rows) {
       if (resultOf(i)) continue;
@@ -488,41 +555,43 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
   };
   const all = responses.map((r, i) => ({ r, i }));
   const remaining = responses.length - done;
-  const dirty = form.formState.isDirty;
+
+  /** After an answer, bring the next unanswered item into view (in "To do" the answered one drops out of the list). */
+  const onAnswered = (i: number) => {
+    window.setTimeout(() => {
+      const items = form.getValues().items;
+      const next = responses.findIndex((_, k) => k > i && !items[k].itemResult);
+      const el = next >= 0 ? listRef.current?.querySelector<HTMLElement>(`[data-item="${next}"]`) : null;
+      el?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    }, 150);
+  };
 
   return (
     <SectionCard>
       <PanelTitle
         title="Checklist"
-        description={`${responses.length} item${responses.length === 1 ? "" : "s"} · ${storedRequired}/${required} required items saved on the server.`}
+        description={`${done} of ${responses.length} answered · answers save automatically.`}
         actions={
           remaining > 0 && (
-            <Button type="button" variant="secondary" size="sm" onClick={() => passRemaining(all)}>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setConfirmAllPass(all)}>
               <ChecksIcon aria-hidden /> Mark remaining {remaining} as Pass
             </Button>
           )
         }
       />
-      <form onSubmit={onSubmit} noValidate className="space-y-4">
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted/50 p-3 sm:flex-row sm:gap-6">
-          <Progress label="Items with a result" done={done} total={responses.length} />
-          <Progress label="Required items" done={doneRequired} total={required} />
-        </div>
+      <div ref={listRef} className="space-y-4">
         <FilterPills
           label="Checklist view"
           value={view}
           onChange={(x) => setView(x as View)}
           items={[
-            { value: "all", label: "All", count: responses.length },
             { value: "todo", label: "To do", count: remaining, highlight: remaining > 0 },
-            { value: "required", label: "Required to do", count: required - doneRequired, highlight: required - doneRequired > 0 },
             { value: "failed", label: "Failed", count: failed },
+            { value: "all", label: "All", count: responses.length },
           ]}
         />
         {canReadTemplate && template.error ? <Notice>Allowed options for select items could not be loaded; enter values as text.</Notice> : null}
-        {!canReadTemplate && responses.some((r) => r.responseTypeSnapshot.endsWith("SELECT")) && (
-          <Notice>Select options come from the checklist template, which requires inspections.templates.manage. Enter select values as text.</Notice>
-        )}
+        {!canReadTemplate && responses.some((r) => r.responseTypeSnapshot.endsWith("SELECT")) && <Notice>Select options could not be loaded for your account. Type select answers as text.</Notice>}
 
         {sections.map((s) => {
           const rows = s.rows.filter(({ r, i }) => matches(r, i));
@@ -548,7 +617,7 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
                   </span>
                 </button>
                 {sDone < s.rows.length && (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => passRemaining(s.rows)}>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmAllPass(s.rows)}>
                     <ChecksIcon aria-hidden /> All Pass
                   </Button>
                 )}
@@ -564,6 +633,8 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
                       form={form}
                       description={describe(s, r)}
                       numberError={form.formState.errors.items?.[i]?.number?.message}
+                      inspection={inspection}
+                      onAnswered={onAnswered}
                     />
                   ))}
                 </ol>
@@ -571,22 +642,39 @@ export function ChecklistPanel({ inspection, editable }: { inspection: Inspectio
             </section>
           );
         })}
-        {sections.every((s) => s.rows.every(({ r, i }) => !matches(r, i))) && <p className="py-6 text-center text-sm text-muted-foreground">Nothing here — every item in this view is done.</p>}
+        {sections.every((s) => s.rows.every(({ r, i }) => !matches(r, i))) && (
+          <p className="py-6 text-center text-sm text-muted-foreground">{view === "todo" ? "All items answered. Continue to Photos." : "Nothing in this view."}</p>
+        )}
 
-        {notPersisted !== null && notPersisted > 0 && (
-          <Notice tone="danger" title="The server did not store your answers">
-            The save call succeeded, but {notPersisted} of {responses.length} item{responses.length === 1 ? "" : "s"} came back unchanged. Your input is kept on this page; refresh the
-            inspection and save again, and report it if it keeps happening.
+        {notPersisted > 0 && (
+          <Notice tone="danger" title="Some answers were not stored">
+            {notPersisted} item{notPersisted === 1 ? "" : "s"} came back unchanged from the server. Your input is kept on this page.{" "}
+            <button type="button" className="font-medium underline" onClick={() => void saveNow()}>
+              Try again
+            </button>
           </Notice>
         )}
-        <ApiErrorNotice error={save.error} />
-        <div className="sticky bottom-0 z-10 -mx-4 flex items-center justify-between gap-3 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-          <span className="text-sm text-muted-foreground">{dirty ? "You have unsaved changes." : "All changes saved."}</span>
-          <Button type="submit" variant="primary" loading={save.isPending}>
-            Save responses
-          </Button>
-        </div>
-      </form>
+        {error ? (
+          <div className="space-y-2">
+            <ApiErrorNotice error={error} />
+            <Button type="button" variant="secondary" size="sm" onClick={() => void saveNow()}>
+              Try saving again
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      <ConfirmDialog
+        open={confirmAllPass !== null}
+        onOpenChange={(o) => !o && setConfirmAllPass(null)}
+        title={`Mark ${confirmAllPass?.filter(({ i }) => !resultOf(i)).length ?? 0} items as Pass?`}
+        description="Only items without an answer are changed. You can still change any of them afterwards."
+        confirmLabel="Mark as Pass"
+        tone="primary"
+        onConfirm={() => {
+          if (confirmAllPass) passRemaining(confirmAllPass);
+          setConfirmAllPass(null);
+        }}
+      />
     </SectionCard>
   );
 }

@@ -158,7 +158,7 @@ function InspectionsContent() {
         }
       />
       <StatCards
-        className="mb-4"
+        className="mb-4 hidden md:grid"
         items={[
           { label: "Pending", hint: "Waiting for an inspector", icon: <HourglassIcon />, ...pending },
           { label: "Assigned", hint: "Inspector assigned, not started", icon: <UserCheckIcon />, ...assigned },

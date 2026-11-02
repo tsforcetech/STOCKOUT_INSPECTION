@@ -6,6 +6,16 @@ import { renderWithApp, sessionRoutes } from "@/test/render";
 import { mockFetch } from "@/test/http";
 import type { InspectionDetailDto, InspectionResponseDto } from "@/api/types/catalog-moderation";
 import { ChecklistPanel, buildSections } from "../detail/checklist";
+import { InspectionWriterProvider } from "../detail/writer";
+import { PhotoUploadsProvider } from "../detail/evidence";
+
+const Panel = ({ inspection: i }: { inspection: InspectionDetailDto }) => (
+  <InspectionWriterProvider inspection={i}>
+    <PhotoUploadsProvider inspection={i}>
+      <ChecklistPanel inspection={i} editable />
+    </PhotoUploadsProvider>
+  </InspectionWriterProvider>
+);
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -42,7 +52,7 @@ const responses = [
   item("SUM_SEAL", "Seal intact", "PASS_FAIL", 40),
 ];
 
-const inspection = { inspectionId: "i-1", inspectionChecklistTemplateId: "tpl-1", rowVersion: "rv-1", responses } as unknown as InspectionDetailDto;
+const inspection = { inspectionId: "i-1", inspectionChecklistTemplateId: "tpl-1", rowVersion: "rv-1", responses, evidence: [] } as unknown as InspectionDetailDto;
 
 describe("buildSections", () => {
   it("groups by code prefix and names sections from the shared description", () => {
@@ -55,7 +65,7 @@ describe("buildSections", () => {
 });
 
 describe("Checklist panel", () => {
-  it("answers with one tap, suggests results from scores, bulk-passes a section and saves", async () => {
+  it("answers with one tap, suggests results from scores, bulk-passes a section and autosaves", async () => {
     sessionStorage.setItem("stockout.inspection.rt", "rt-1");
     let saved: { responses: Array<Record<string, unknown>> } | null = null;
     mockFetch([
@@ -77,7 +87,7 @@ describe("Checklist panel", () => {
       },
     ]);
     const user = userEvent.setup();
-    renderWithApp([{ element: <RequireAuth />, children: [{ path: "/", element: <ChecklistPanel inspection={inspection} editable /> }] }, { path: "/login", element: <div>login</div> }], "/");
+    renderWithApp([{ element: <RequireAuth />, children: [{ path: "/", element: <Panel inspection={inspection} /> }] }, { path: "/login", element: <div>login</div> }], "/");
 
     expect(await screen.findByText("Documentation & Compliance")).toBeInTheDocument();
     expect(screen.getByText("Critical")).toBeInTheDocument();
@@ -90,15 +100,17 @@ describe("Checklist panel", () => {
     // Section "All Pass" fills only the empty result.
     const doc = screen.getByRole("region", { name: "Documentation & Compliance" });
     await user.click(within(doc).getByRole("button", { name: /All Pass/ }));
+    await user.click(await screen.findByRole("button", { name: "Mark as Pass" }));
     expect(within(screen.getByRole("radiogroup", { name: "Result: Test certificate available" })).getByRole("radio", { name: /Pass/ })).toHaveAttribute("aria-checked", "true");
 
     // Pass/fail items are answered by the result buttons.
     await user.click(within(screen.getByRole("radiogroup", { name: "Result: Seal intact" })).getByRole("radio", { name: /Pass/ }));
     await user.type(screen.getByRole("spinbutton", { name: "Answer: Quantity verified" }), "120");
 
-    await user.click(screen.getByRole("button", { name: "Save responses" }));
-    await waitFor(() => expect(saved).not.toBeNull());
+    // No save button: answers are stored automatically shortly after the last change.
+    expect(screen.queryByRole("button", { name: "Save responses" })).not.toBeInTheDocument();
     const by = (id: string) => saved!.responses.find((x) => x.inspectionResponseId === id)!;
+    await waitFor(() => expect(saved && by("r-HDR_QTY_VERIFIED").numberValue).toBe(120), { timeout: 4000 });
     expect(by("r-DOC_1")).toMatchObject({ singleSelectValue: "2 - Poor (conditional only)", itemResult: "FAIL" });
     expect(by("r-DOC_2")).toMatchObject({ itemResult: "PASS" });
     expect(by("r-SUM_SEAL")).toMatchObject({ passFailValue: "PASS", itemResult: "PASS" });
@@ -110,7 +122,7 @@ describe("Checklist panel", () => {
     mockFetch([...sessionRoutes(["inspections.perform"])]);
     const done = { ...inspection, responses: responses.map((r, i) => (i === 0 ? { ...r, itemResult: "PASS" as const, numberValue: 5 } : r)) } as InspectionDetailDto;
     const user = userEvent.setup();
-    renderWithApp([{ element: <RequireAuth />, children: [{ path: "/", element: <ChecklistPanel inspection={done} editable /> }] }, { path: "/login", element: <div>login</div> }], "/");
+    renderWithApp([{ element: <RequireAuth />, children: [{ path: "/", element: <Panel inspection={done} /> }] }, { path: "/login", element: <div>login</div> }], "/");
     await user.click(await screen.findByRole("tab", { name: /^To do/ }));
     expect(screen.queryByText("Quantity verified")).not.toBeInTheDocument();
     expect(screen.getByText("Seal intact")).toBeInTheDocument();

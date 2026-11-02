@@ -58,6 +58,8 @@ export function AppLayout() {
   const location = useLocation();
   const navigation = useNavigation();
   const mainRef = React.useRef<HTMLElement>(null);
+  // The inspection screen has its own sticky header and action bar.
+  const focused = /^\/inspections\/[^/]+\/?$/.test(location.pathname);
 
   React.useEffect(() => {
     mainRef.current?.scrollTo?.({ top: 0 });
@@ -117,7 +119,7 @@ export function AppLayout() {
           className="min-w-0 flex-1 bg-surface-muted px-3 pb-24 pt-4 focus:outline-none sm:px-6 md:rounded-tl-xl md:border-l md:border-t md:border-border md:pb-8 md:pt-6 lg:px-8 lg:py-8"
         >
           <div className="mx-auto w-full max-w-[1320px]">
-            <Breadcrumbs className="mb-3 px-0 sm:px-3" />
+            {!focused && <Breadcrumbs className="mb-3 px-0 sm:px-3" />}
             <ErrorBoundary resetKey={location.pathname}>
               <React.Suspense fallback={<PageSkeleton />}>
                 <Outlet />
@@ -126,7 +128,7 @@ export function AppLayout() {
           </div>
         </main>
       </div>
-      <BottomTabs />
+      {!focused && <BottomTabs />}
     </div>
   );
 }
