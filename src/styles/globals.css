@@ -1,0 +1,240 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/space-grotesk";
+
+/*
+ * Design tokens — taken from the StockOut Figma variables (file kCkVUDyE4KVr3VchJZz5si):
+ *   Surface/Page #fff · Surface/Default #f7f7f7 · Surface/Action #f8ff2c · Surface/Action Hover #e2e828
+ *   Text/Headings #1a1a1a · Text/Body #2d2d27 · Text/Disabled #74756c · Text/Success #059669 · Text/Error #dc2626
+ *   Border/Default #eeeeed · Border/Seconds #e1e1e0 · Border/Secondary Action #c9c9c6 · Border/Action #aaaa00
+ *   Primary/100 #fdffbe · Primary/200 #fcff9e · Primary/600 #e2e828 · Red/Light hover #fadfe3
+ *   Radius: Small 4 · Medium 8 · Large 16 · X Large 24 · Full 999
+ *   Fonts (Brand Guidelines V1.0): Geist primary (headings + body) · Space Grotesk secondary (eyebrows)
+ * Components reference only the semantic tokens below. The Figma file has no dark theme; the dark
+ * values are derived so the console stays usable for users who prefer dark mode.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f7f7f7;
+  --foreground: #1a1a1a;
+  --body: #2d2d27;
+  --surface: #ffffff;
+  --surface-muted: #f7f7f7;
+  --muted-foreground: #74756c;
+  --border: #eeeeed;
+  --border-strong: #e1e1e0;
+  --input: #e1e1e0;
+  --ring: #aaaa00;
+
+  /* Lime "action" colour — used for highlights, active nav, icon accents */
+  --action: #f8ff2c;
+  --action-hover: #e2e828;
+  --action-border: #aaaa00;
+  --action-foreground: #1a1a1a;
+  --action-soft: #fdffbe;
+  --action-soft-strong: #fcff9e;
+  /* "Ink" — dark pill with lime label: active nav items and portal call-to-action buttons */
+  --ink: #1a1a1a;
+  --ink-hover: #2d2d27;
+  --ink-foreground: #f8ff2c;
+
+  /* Primary CTA — near-black pill with lime label (Figma "Continue") */
+  --primary: #1a1a1a;
+  --primary-hover: #2d2d27;
+  --primary-foreground: #f8ff2c;
+  --secondary-border: #c9c9c6;
+
+  --success: #059669;
+  --success-soft: #e6f6f0;
+  --success-soft-foreground: #047857;
+  --warning: #b45309;
+  --warning-soft: #fdf3dc;
+  --warning-soft-foreground: #92400e;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-soft: #fadfe3;
+  --danger-soft-foreground: #b91c1c;
+  --info-soft: #eef2f7;
+  --info-soft-foreground: #334155;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #74756c;
+
+  --shadow-raised: 0 4px 8px -2px #0000000a, 0 2px 4px -2px #00000014;
+}
+
+.dark {
+  --background: #111110;
+  --foreground: #f4f4f2;
+  --body: #dedfd8;
+  --surface: #1a1a19;
+  --surface-muted: #232321;
+  --muted-foreground: #a3a49b;
+  --border: #2e2e2b;
+  --border-strong: #3a3a36;
+  --input: #3a3a36;
+  --ring: #e2e828;
+
+  --action: #f8ff2c;
+  --action-hover: #e2e828;
+  --action-border: #aaaa00;
+  --action-foreground: #1a1a1a;
+  --action-soft: #33341a;
+  --action-soft-strong: #3f4120;
+  --ink: #2a2b1c;
+  --ink-hover: #34361f;
+  --ink-foreground: #f8ff2c;
+
+  --primary: #f8ff2c;
+  --primary-hover: #e2e828;
+  --primary-foreground: #1a1a1a;
+  --secondary-border: #4a4a45;
+
+  /* Lighter text tones so success/warning/error copy keeps >= 4.5:1 on the dark surfaces. */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --success-soft: #0f2e24;
+  --success-soft-foreground: #6ee7b7;
+  --warning-soft: #33270f;
+  --warning-soft-foreground: #fcd34d;
+  --danger-soft: #3a1519;
+  --danger-soft-foreground: #fca5a5;
+  --info-soft: #1f2530;
+  --info-soft-foreground: #cbd5e1;
+
+  --sidebar: #161615;
+  --sidebar-foreground: #a3a49b;
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  /* Brand Guidelines V1.0: Geist is the primary font (body and headings); Space Grotesk is the secondary font, used
+     for small accent labels (eyebrows). */
+  --font-heading: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Space Grotesk Variable", "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-body: var(--body);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-action-border: var(--action-border);
+  --color-action-foreground: var(--action-foreground);
+  --color-action-soft: var(--action-soft);
+  --color-action-soft-strong: var(--action-soft-strong);
+  --color-ink: var(--ink);
+  --color-ink-hover: var(--ink-hover);
+  --color-ink-foreground: var(--ink-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-border: var(--secondary-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-soft-foreground: var(--success-soft-foreground);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-soft-foreground: var(--warning-soft-foreground);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-soft-foreground: var(--danger-soft-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-info-soft-foreground: var(--info-soft-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --shadow-raised: var(--shadow-raised);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-surface);
+    color: var(--color-body);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-foreground);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-action);
+    color: var(--color-action-foreground);
+  }
+}
+
+@utility font-heading {
+  font-family: var(--font-heading);
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+/* Figma "Body/Xsm Caps" — small uppercase eyebrow labels */
+@utility text-eyebrow {
+  font-size: 12px;
+  line-height: 14px;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Brand loader: the "O" mark turns in quarter steps (see components/feedback/brand-loader.tsx). */
+@keyframes brand-turn {
+  0%, 12% { transform: rotate(0deg); }
+  25%, 37% { transform: rotate(90deg); }
+  50%, 62% { transform: rotate(180deg); }
+  75%, 87% { transform: rotate(270deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes brand-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.brand-loader {
+  animation: brand-turn 2.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-loader {
+    animation: brand-pulse 1.6s ease-in-out infinite;
+  }
+}

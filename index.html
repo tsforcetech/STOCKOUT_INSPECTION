@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#1A1A1A" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>StockOut Inspection</title>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Startup splash (brand icon), replaced as soon as the app renders. -->
+      <style>
+        .boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #f7f7f7; }
+        .boot img { width: 48px; height: 48px; animation: boot-turn 2.4s cubic-bezier(0.65, 0, 0.35, 1) infinite; }
+        @keyframes boot-turn { 0%, 12% { transform: rotate(0); } 25%, 37% { transform: rotate(90deg); } 50%, 62% { transform: rotate(180deg); } 75%, 87% { transform: rotate(270deg); } 100% { transform: rotate(360deg); } }
+        @media (prefers-color-scheme: dark) { .boot { background: #111110; } }
+        @media (prefers-reduced-motion: reduce) { .boot img { animation: none; } }
+      </style>
+      <div class="boot" role="status" aria-label="Loading"><img src="/favicon.svg" alt="" /></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
