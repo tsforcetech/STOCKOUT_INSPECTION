@@ -47,7 +47,7 @@ function CorrectionsContent() {
 
   return (
     <>
-      <PageHeader eyebrow="Operations" title="Listing corrections" description="Changes inspectors proposed after an inspection, and where each one stands." />
+      <PageHeader eyebrow="StockOut inspection" title="Listing corrections" description="Changes inspectors proposed after an inspection, and where each one stands." />
       <SectionCard>
         <Toolbar
           left={
@@ -72,9 +72,9 @@ function CorrectionsContent() {
           }
         />
         <div className="-mt-1 mb-4 grid gap-2 sm:grid-cols-3">
-          <GuidFilterInput value={state.seller} onChange={(seller) => setState({ seller }, { resetPage: true })} label="Seller ID" placeholder="Seller ID" />
-          <GuidFilterInput value={state.listing} onChange={(listing) => setState({ listing }, { resetPage: true })} label="Listing ID" placeholder="Listing ID" />
-          <GuidFilterInput value={state.inspection} onChange={(inspection) => setState({ inspection }, { resetPage: true })} label="Inspection ID" placeholder="Inspection ID" />
+          <GuidFilterInput className="sm:w-full" value={state.seller} onChange={(seller) => setState({ seller }, { resetPage: true })} label="Seller ID" placeholder="Seller ID" />
+          <GuidFilterInput className="sm:w-full" value={state.listing} onChange={(listing) => setState({ listing }, { resetPage: true })} label="Listing ID" placeholder="Listing ID" />
+          <GuidFilterInput className="sm:w-full" value={state.inspection} onChange={(inspection) => setState({ inspection }, { resetPage: true })} label="Inspection ID" placeholder="Inspection ID" />
         </div>
         <DataTable
           caption="Listing corrections"

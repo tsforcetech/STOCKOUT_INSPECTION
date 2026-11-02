@@ -47,7 +47,7 @@ function Content() {
   const filtered = !!(s.type || s.seller || s.listing) || s.status !== "SUBMITTED";
   return (
     <>
-      <PageHeader eyebrow="Operations" title="Inspection disputes" description="Seller appeals of inspection results and disputes after declining a correction. Decide by approving a re-inspection (by a different inspector) or rejecting." />
+      <PageHeader eyebrow="StockOut inspection" title="Inspection disputes" description="Seller appeals of inspection results and disputes after declining a correction. Decide by approving a re-inspection (by a different inspector) or rejecting." />
       <SectionCard>
         <Toolbar
           left={
