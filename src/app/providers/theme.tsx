@@ -11,12 +11,13 @@ interface ThemeContextValue {
 
 const ThemeContext = React.createContext<ThemeContextValue | null>(null);
 
+/** Light unless the user chose otherwise (product decision: bright by default; Dark/System are opt-in). */
 function readStored(): Theme {
   try {
     const v = localStorage.getItem(KEY);
-    return v === "light" || v === "dark" ? v : "system";
+    return v === "light" || v === "dark" || v === "system" ? v : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
 
@@ -41,8 +42,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setTheme = React.useCallback((next: Theme) => {
     setThemeState(next);
     try {
-      if (next === "system") localStorage.removeItem(KEY);
-      else localStorage.setItem(KEY, next);
+      localStorage.setItem(KEY, next);
     } catch {
       /* ignore */
     }
