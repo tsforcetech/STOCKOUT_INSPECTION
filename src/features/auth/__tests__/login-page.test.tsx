@@ -35,7 +35,7 @@ describe("LoginPage", () => {
   it("signs in and lands on the dashboard", async () => {
     const { calls } = mockFetch([
       { method: "POST", path: "/api/v1/auth/login", respond: () => ({ body: { accessToken: "a.eyJzaWQiOiJzMSJ9.c", refreshToken: "rt", expiresIn: 900, tokenType: "Bearer", mfaRequired: false, mfaChallengeToken: null } }) },
-      ...sessionRoutes(["roles.view"]).slice(1),
+      ...sessionRoutes(["inspections.perform"]).slice(1),
     ]);
     renderWithApp(routes, "/login");
     await userEvent.type(await screen.findByLabelText("Email"), "admin@stockout.test");
@@ -49,7 +49,7 @@ describe("LoginPage", () => {
     const { calls } = mockFetch([
       { method: "POST", path: "/api/v1/auth/login", respond: () => ({ body: { accessToken: "", refreshToken: "", expiresIn: 0, tokenType: "Bearer", mfaRequired: true, mfaChallengeToken: "chal-1", userId: "u-1" } }) },
       { method: "POST", path: "/api/v1/auth/mfa/verify", respond: () => ({ body: { accessToken: "a.eyJzaWQiOiJzMSJ9.c", refreshToken: "rt", expiresIn: 900, tokenType: "Bearer", mfaRequired: false } }) },
-      ...sessionRoutes([]).slice(1),
+      ...sessionRoutes(["inspections.perform"]).slice(1),
     ]);
     renderWithApp(routes, "/login");
     await userEvent.type(await screen.findByLabelText("Email"), "admin@stockout.test");
@@ -60,5 +60,20 @@ describe("LoginPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
     expect(await screen.findByText("Dashboard home")).toBeInTheDocument();
     expect(calls.find((c) => c.url.pathname === "/api/v1/auth/mfa/verify")?.body).toEqual({ userId: "u-1", challengeToken: "chal-1", code: "123456", recoveryCode: null });
+  });
+
+  it("refuses a buyer/seller account (no inspection permission) and revokes the new session", async () => {
+    const { calls } = mockFetch([
+      { method: "POST", path: "/api/v1/auth/login", respond: () => ({ body: { accessToken: "a.eyJzaWQiOiJzMSJ9.c", refreshToken: "rt-seller", expiresIn: 900, tokenType: "Bearer", mfaRequired: false } }) },
+      { method: "POST", path: "/api/v1/auth/logout", respond: () => ({ status: 204 }) },
+      ...sessionRoutes([]).slice(1),
+    ]);
+    renderWithApp(routes, "/login");
+    await userEvent.type(await screen.findByLabelText("Email"), "seller@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "correct-horse-battery");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText(/doesn't have inspection access/)).toBeInTheDocument();
+    expect(screen.queryByText("Dashboard home")).not.toBeInTheDocument();
+    expect(calls.find((c) => c.url.pathname === "/api/v1/auth/logout")?.body).toEqual({ refreshToken: "rt-seller" });
   });
 });

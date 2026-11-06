@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormError, FormField } from "@/components/forms/form-field";
 import { PasswordInput } from "@/components/forms/password-input";
-import { useAuth, type MfaChallenge } from "@/lib/auth/auth-context";
+import { AdminAccessDeniedError, useAuth, type MfaChallenge } from "@/lib/auth/auth-context";
 import { getErrorMessage, isApiError } from "@/lib/api/errors";
 import { AuthCard, AuthShell } from "./auth-shell";
 
@@ -18,7 +18,10 @@ const credentialsSchema = z.object({
 type Credentials = z.infer<typeof credentialsSchema>;
 
 /** Identity returns ProblemDetails without an error code; map by status + title (see contract). */
+const NOT_STAFF = "This account doesn't have inspection access. The inspection portal is for StockOut inspectors only. Buyers and sellers sign in at www.stockoutme.com.";
+
 function loginErrorMessage(error: unknown): string {
+  if (error instanceof AdminAccessDeniedError) return NOT_STAFF;
   if (!isApiError(error)) return getErrorMessage(error);
   const title = typeof (error.body as { title?: unknown } | undefined)?.title === "string" ? (error.body as { title: string }).title : "";
   if (error.status === 401) return "The email or password is incorrect.";
@@ -45,7 +48,9 @@ export default function LoginPage() {
   const onSubmit = form.handleSubmit(async (values) => {
     setFormError(null);
     try {
-      const result = await signIn(values.emailOrMobile.trim(), values.password);
+      // Only a sign-in that goes straight to accepting a platform invitation may proceed without an admin role yet.
+      const next = params.get("next") ?? "";
+      const result = await signIn(values.emailOrMobile.trim(), values.password, { allowWithoutAdminAccess: next.startsWith("/platform/invitation") });
       if (result.kind === "mfa-required") setChallenge(result.challenge);
       else goNext();
     } catch (error) {
@@ -72,6 +77,7 @@ export default function LoginPage() {
               Your session has expired. Please sign in again.
             </div>
           )}
+          {endReason === "access-denied" && !formError && <FormError message={NOT_STAFF} />}
           <FormError message={formError} />
           <FormField label="Email" htmlFor="emailOrMobile" error={form.formState.errors.emailOrMobile?.message}>
             <Input type="text" inputMode="email" autoComplete="username" placeholder="Enter your email address" autoFocus {...form.register("emailOrMobile")} />
@@ -123,7 +129,7 @@ function MfaStep({ challenge: initial, onBack, onDone }: { challenge: MfaChallen
       await verifyMfa(challenge, code);
       onDone();
     } catch (err) {
-      setError(isApiError(err) && err.status === 401 ? "That code is incorrect or has expired." : getErrorMessage(err));
+      setError(err instanceof AdminAccessDeniedError ? NOT_STAFF : isApiError(err) && err.status === 401 ? "That code is incorrect or has expired." : getErrorMessage(err));
       setCode("");
     } finally {
       setSubmitting(false);

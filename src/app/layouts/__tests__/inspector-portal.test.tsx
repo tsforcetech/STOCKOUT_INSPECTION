@@ -28,12 +28,13 @@ const app = (path: string) =>
   );
 
 describe("Inspector portal shell", () => {
-  it("shows the inspector-only screen to accounts without an inspection permission", async () => {
+  it("signs out accounts without an inspection permission (buyers, sellers, other staff) and revokes the session", async () => {
     localStorage.setItem("stockout.inspection.rt", "rt-1");
-    mockFetch([...sessionRoutes(["sellers.view"])]);
+    const { calls } = mockFetch([...sessionRoutes(["sellers.view"]), { method: "POST", path: "/api/v1/auth/logout", respond: () => ({ status: 204 }) }]);
     app("/");
-    expect(await screen.findByRole("heading", { name: "Inspector access only" })).toBeInTheDocument();
+    expect(await screen.findByText("login")).toBeInTheDocument();
     expect(screen.queryByText("home")).not.toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.url.pathname === "/api/v1/auth/logout")).toBe(true));
   });
 
   it("shows only inspection navigation, including the phone tab bar", async () => {

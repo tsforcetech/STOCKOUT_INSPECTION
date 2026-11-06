@@ -22,7 +22,26 @@ export interface MfaChallenge {
   userId: string;
   challengeToken: string;
   emailOrMobile: string;
+  /** Only for signing in to accept a platform invitation (the account has no admin role until it accepts). */
+  allowWithoutAdminAccess?: boolean;
 }
+
+/**
+ * The inspection portal is for StockOut inspectors only. An account without an inspection permission (every
+ * marketplace buyer and seller, and staff without inspection access) is refused at sign-in and its new session is
+ * revoked on the server.
+ */
+export class AdminAccessDeniedError extends Error {
+  readonly code = "ADMIN_ACCESS_REQUIRED";
+  constructor() {
+    super("This account doesn't have access to StockOut Inspection.");
+    this.name = "AdminAccessDeniedError";
+  }
+}
+
+/** Inspector = any inspection permission from /platform/me/permissions (same rule as the portal's INSPECTOR_ACCESS). */
+const INSPECTION_PERMISSIONS = ["inspections.view", "inspections.perform", "inspections.assign", "inspections.override"];
+export const isPlatformStaff = (a: AccessContext) => INSPECTION_PERMISSIONS.some((p) => a.permissions.has(p));
 
 export type SignInResult =
   | { kind: "signed-in" }
@@ -33,15 +52,17 @@ interface AuthContextValue {
   user: CurrentIdentityResponse | null;
   access: AccessContext;
   /** Why the last session ended, shown on the login screen. */
-  endReason: "expired" | "signed-out" | null;
+  endReason: "expired" | "signed-out" | "access-denied" | null;
   /** Permission/role load failure (user is signed in but access could not be resolved). */
   accessError: unknown;
-  signIn: (emailOrMobile: string, password: string) => Promise<SignInResult>;
+  signIn: (emailOrMobile: string, password: string, options?: { allowWithoutAdminAccess?: boolean }) => Promise<SignInResult>;
   verifyMfa: (challenge: MfaChallenge, code: string) => Promise<void>;
   resendMfa: (challenge: MfaChallenge) => Promise<MfaChallenge>;
   signOut: () => Promise<void>;
   /** Clears local session state without calling the API (e.g. after password change). */
-  endSessionLocally: (reason: "expired" | "signed-out") => void;
+  endSessionLocally: (reason: "expired" | "signed-out" | "access-denied") => void;
+  /** Revokes the session on the server and signs out because the account isn't platform staff. */
+  denyAccess: () => Promise<void>;
   reloadAccess: () => Promise<void>;
   /** Starts a session from tokens issued outside the login form (e.g. invitation sign-up). */
   startSession: (tokens: { accessToken: string; refreshToken: string; expiresIn: number }) => Promise<void>;
@@ -94,11 +115,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [access, setAccess] = React.useState<AccessContext>(EMPTY_ACCESS);
   const [accessError, setAccessError] = React.useState<unknown>(null);
   const [endReason, setEndReason] = React.useState<
-    "expired" | "signed-out" | null
+    "expired" | "signed-out" | "access-denied" | null
   >(null);
 
   const endSessionLocally = React.useCallback(
-    (reason: "expired" | "signed-out") => {
+    (reason: "expired" | "signed-out" | "access-denied") => {
       tokenStore.clear();
       queryClient.clear();
       setUser(null);
@@ -118,31 +139,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       platformService.myRoles(),
     ]);
     if (me.status === "rejected") throw me.reason;
+    // Fail closed: without a confirmed permission list nobody gets into the console.
+    if (perms.status === "rejected") throw perms.reason;
+    const next = buildAccessContext(perms.value.permissions, roles.status === "fulfilled" ? roles.value.roles.map((r) => r.code) : []);
     setUser(me.value);
-    if (perms.status === "fulfilled") {
-      setAccess(
-        buildAccessContext(
-          perms.value.permissions,
-          roles.status === "fulfilled"
-            ? roles.value.roles.map((r) => r.code)
-            : [],
-        ),
-      );
-      setAccessError(null);
-    } else {
-      setAccess(EMPTY_ACCESS);
-      setAccessError(perms.reason);
-    }
+    setAccess(next);
+    setAccessError(null);
+    return next;
   }, []);
 
+  /** Best-effort server-side revocation of the current session, then local sign-out. */
+  const revokeAndEnd = React.useCallback(
+    async (reason: "access-denied" | "signed-out") => {
+      const refreshToken = tokenStore.get()?.refreshToken ?? tokenStore.getPersistedRefreshToken();
+      if (refreshToken) await authService.logout(refreshToken).catch(() => undefined);
+      endSessionLocally(reason);
+    },
+    [endSessionLocally],
+  );
+
   const completeSignIn = React.useCallback(
-    async (res: LoginResponse) => {
+    async (res: LoginResponse, allowWithoutAdminAccess = false) => {
       tokenStore.set(res.accessToken, res.refreshToken, res.expiresIn);
-      await loadAccess();
+      try {
+        const next = await loadAccess();
+        if (!isPlatformStaff(next) && !allowWithoutAdminAccess) throw new AdminAccessDeniedError();
+      } catch (error) {
+        // Never leave a usable session behind for an account that may not use the console.
+        await revokeAndEnd(error instanceof AdminAccessDeniedError ? "access-denied" : "signed-out");
+        throw error;
+      }
       setEndReason(null);
       setStatus("authenticated");
     },
-    [loadAccess],
+    [loadAccess, revokeAndEnd],
   );
 
   // Wire the HTTP client to this provider.
@@ -179,6 +209,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       try {
         await loadAccess();
+        // Non-staff accounts are signed out by RequireAuth as soon as they reach any console page; only the public
+        // invitation page can be used without an admin role.
         if (!cancelled) setStatus("authenticated");
       } catch (error) {
         if (cancelled || (isApiError(error) && error.kind === "aborted"))
@@ -199,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [loadAccess, endSessionLocally]);
 
   const signIn = React.useCallback(
-    async (emailOrMobile: string, password: string): Promise<SignInResult> => {
+    async (emailOrMobile: string, password: string, options?: { allowWithoutAdminAccess?: boolean }): Promise<SignInResult> => {
       const res = await authService.login({ emailOrMobile, password });
       if (res.mfaRequired) {
         if (!res.userId || !res.mfaChallengeToken)
@@ -212,10 +244,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             userId: res.userId,
             challengeToken: res.mfaChallengeToken,
             emailOrMobile,
+            allowWithoutAdminAccess: options?.allowWithoutAdminAccess,
           },
         };
       }
-      await completeSignIn(res);
+      await completeSignIn(res, options?.allowWithoutAdminAccess);
       return { kind: "signed-in" };
     },
     [completeSignIn],
@@ -229,7 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         code,
         recoveryCode: null,
       });
-      await completeSignIn(res);
+      await completeSignIn(res, challenge.allowWithoutAdminAccess);
     },
     [completeSignIn],
   );
@@ -281,6 +314,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await loadAccess();
   }, [loadAccess]);
 
+  const denyAccess = React.useCallback(() => revokeAndEnd("access-denied"), [revokeAndEnd]);
+
   const value = React.useMemo<AuthContextValue>(
     () => ({
       status,
@@ -294,7 +329,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signOut,
       endSessionLocally,
       reloadAccess,
-      startSession: completeSignIn as (tokens: { accessToken: string; refreshToken: string; expiresIn: number }) => Promise<void>,
+      denyAccess,
+      // Invitation sign-up: the role arrives with the accepted invitation; the console guard re-checks staff access.
+      startSession: (tokens: { accessToken: string; refreshToken: string; expiresIn: number }) => completeSignIn(tokens as LoginResponse, true),
     }),
     [
       status,
@@ -308,6 +345,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signOut,
       endSessionLocally,
       reloadAccess,
+      denyAccess,
       completeSignIn,
     ],
   );

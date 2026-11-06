@@ -41,7 +41,7 @@ describe("route guards", () => {
 
   it("restores a session from the stored refresh token", async () => {
     sessionStorage.setItem("stockout.inspection.rt", "rt-1");
-    const { calls } = mockFetch(sessionRoutes(["roles.view"]));
+    const { calls } = mockFetch(sessionRoutes(["inspections.perform"]));
     renderWithApp(routes, "/secret");
     expect(await screen.findByText("Secret page")).toBeInTheDocument();
     expect(calls.find((c) => c.url.pathname === "/api/v1/auth/token/refresh")?.body).toEqual({ refreshToken: "rt-1" });
@@ -50,7 +50,7 @@ describe("route guards", () => {
 
   it("shows a permission-denied state when the permission is missing", async () => {
     sessionStorage.setItem("stockout.inspection.rt", "rt-1");
-    mockFetch(sessionRoutes(["sellers.view"]));
+    mockFetch(sessionRoutes(["inspections.view"]));
     renderWithApp(routes, "/roles");
     expect(await screen.findByText("You don't have access")).toBeInTheDocument();
     expect(screen.queryByText("Roles page")).not.toBeInTheDocument();
