@@ -123,6 +123,12 @@ export default function ProfilePage() {
   const identityName = user?.displayName || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "";
   const p = profile.data ?? null;
   const name = p?.displayName || identityName || user?.email || "Me";
+  // Don't repeat the sign-in email as a heading: prefer a real name, else the part before "@".
+  const realName = [name, [p?.firstName, p?.lastName].filter(Boolean).join(" "), identityName].find((n) => n && !n.includes("@"));
+  const needsName = !p?.displayName || p.displayName.includes("@");
+  const local = (user?.email ?? name).split("@")[0].replace(/[._-]+/g, " ").trim();
+  const titleCase = (t: string) => t.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  const title = (realName && (realName === realName.toUpperCase() ? titleCase(realName) : realName)) || titleCase(local) || "Me";
 
   return (
     <>
@@ -137,11 +143,19 @@ export default function ProfilePage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
           <SectionCard className="space-y-6 self-start">
-            <ProfilePhoto profile={p} name={name} fallbackDisplayName={identityName}>
-              <p className="truncate font-heading text-lg font-bold text-foreground" title={name}>
-                {name}
+            <ProfilePhoto profile={p} name={title} fallbackDisplayName={identityName}>
+              <p className="truncate font-heading text-lg font-bold text-foreground" title={title}>
+                {title}
               </p>
-              {user?.email && name !== user.email && <p className="truncate text-sm text-muted-foreground">{user.email}</p>}
+              {needsName && (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                  onClick={() => document.getElementById("profile-displayName")?.focus()}
+                >
+                  Add your display name
+                </button>
+              )}
               {user?.status && (
                 <div className="mt-2 flex justify-center">
                   <StatusBadge value={user.status} />
