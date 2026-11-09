@@ -69,7 +69,7 @@ export function Separator({ className, orientation = "horizontal", ...props }: R
   );
 }
 
-export function Avatar({ name, src, className }: { name: string; src?: string | null; className?: string }) {
+export function Avatar({ name, src, className, fallbackClassName }: { name: string; src?: string | null; className?: string; fallbackClassName?: string }) {
   const letters = name
     .trim()
     .split(/\s+/)
@@ -81,7 +81,7 @@ export function Avatar({ name, src, className }: { name: string; src?: string | 
   return (
     <AvatarPrimitive.Root className={cn("relative flex size-8 shrink-0 overflow-hidden rounded-full", className)}>
       {src ? <AvatarPrimitive.Image src={src} alt="" className="aspect-square size-full object-cover" /> : null}
-      <AvatarPrimitive.Fallback className="flex size-full items-center justify-center bg-action-soft text-xs font-semibold text-foreground ring-1 ring-border">
+      <AvatarPrimitive.Fallback className={cn("flex size-full items-center justify-center bg-action-soft text-xs font-semibold text-foreground ring-1 ring-border", fallbackClassName)}>
         {letters}
       </AvatarPrimitive.Fallback>
     </AvatarPrimitive.Root>

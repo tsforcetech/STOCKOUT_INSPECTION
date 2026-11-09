@@ -1,16 +1,13 @@
 import * as React from "react";
-import { Link } from "react-router";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { PageHeader, DetailList } from "@/components/common/page-header";
+import { PageHeader } from "@/components/common/page-header";
 import { SectionCard } from "@/components/common/section-card";
 import { StatusBadge } from "@/components/common/status-badge";
-import { IdText } from "@/components/common/copy-button";
 import { ErrorState, PageSkeleton } from "@/components/feedback/states";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/misc";
 import { FormError, FormField } from "@/components/forms/form-field";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useApiMutation } from "@/hooks/use-api-mutation";
@@ -21,6 +18,7 @@ import { formatUtcDateTime } from "@/features/team/utc";
 import { AccountTabs } from "./account-tabs";
 import { accountKeys, useMyProfileQuery } from "./queries";
 import { ProfilePhoto } from "./profile-photo";
+import { SignInIdentity } from "./sign-in-identity";
 
 const schema = z.object({
   displayName: z.string().trim().min(1, "Display name is required."),
@@ -138,45 +136,19 @@ export default function ProfilePage() {
         </SectionCard>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-          <SectionCard className="space-y-6">
-            <ProfilePhoto profile={p} name={name} fallbackDisplayName={identityName} />
-            <div>
-              <h2 className="mb-3 font-heading text-base font-medium text-foreground">Sign-in identity</h2>
-              <DetailList
-                columns={1}
-                items={[
-                  {
-                    label: "Email",
-                    value: (
-                      <span className="flex flex-wrap items-center gap-2">
-                        {user?.email || "—"}
-                        {user && <Badge tone={user.emailVerified ? "success" : "warning"}>{user.emailVerified ? "Verified" : "Not verified"}</Badge>}
-                      </span>
-                    ),
-                  },
-                  {
-                    label: "Mobile",
-                    value: user?.mobile ? (
-                      <span className="flex flex-wrap items-center gap-2">
-                        {user.mobile}
-                        <Badge tone={user.mobileVerified ? "success" : "warning"}>{user.mobileVerified ? "Verified" : "Not verified"}</Badge>
-                      </span>
-                    ) : (
-                      "—"
-                    ),
-                  },
-                  { label: "Account status", value: <StatusBadge value={user?.status} /> },
-                  { label: "User ID", value: <IdText value={user?.userId} /> },
-                ]}
-              />
-              <p className="mt-3 text-xs text-muted-foreground">
-                Email and mobile can't be changed from the console. Manage your password, sessions and MFA in{" "}
-                <Link to="/account/security" className="underline underline-offset-4">
-                  Security
-                </Link>
-                .
+          <SectionCard className="space-y-6 self-start">
+            <ProfilePhoto profile={p} name={name} fallbackDisplayName={identityName}>
+              <p className="truncate font-heading text-lg font-bold text-foreground" title={name}>
+                {name}
               </p>
-            </div>
+              {user?.email && name !== user.email && <p className="truncate text-sm text-muted-foreground">{user.email}</p>}
+              {user?.status && (
+                <div className="mt-2 flex justify-center">
+                  <StatusBadge value={user.status} />
+                </div>
+              )}
+            </ProfilePhoto>
+            <SignInIdentity user={user} />
           </SectionCard>
           <SectionCard>
             <h2 className="font-heading text-xl font-bold text-foreground">Personal details</h2>
